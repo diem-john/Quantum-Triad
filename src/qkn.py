@@ -5,59 +5,59 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-class QuantumKernelNetwork:
-    """
-    Acts as a Quantum Feature Extractor.
-    Maps classical data into a higher-dimensional Hilbert space using
-    Angle Embedding and Strongly Entangling Layers, returning Pauli-Z expectations.
-    """
-
-    def __init__(self, n_qubits=3, layers=2):
-        self.n_qubits = n_qubits
-        self.layers = layers
-        self.dev = qml.device("default.qubit", wires=self.n_qubits)
-
-        # Initialize fixed random weights for the entanglement ansatz
-        # (This acts as a deterministic, non-linear quantum kernel projection)
-        np.random.seed(42)
-        self.weights = pnp.array(np.random.randn(self.layers, self.n_qubits, 3), requires_grad=False)
-
-        @qml.qnode(self.dev, interface="autograd")
-        def quantum_feature_map(inputs, weights):
-            # Pad inputs to match qubit count if necessary
-            padded_inputs = pnp.zeros(self.n_qubits)
-            for i in range(min(len(inputs), self.n_qubits)):
-                padded_inputs[i] = inputs[i]
-
-            # Embed classical features into quantum phases
-            qml.AngleEmbedding(padded_inputs, wires=range(self.n_qubits))
-
-            # Create highly entangled feature topology
-            qml.StronglyEntanglingLayers(weights, wires=range(self.n_qubits))
-
-            # Measure expectation value of each qubit
-            return [qml.expval(qml.PauliZ(i)) for i in range(self.n_qubits)]
-
-        self.qnode = quantum_feature_map
-
-    def extract_temporal_quantum_features(self, X_seq):
-        """
-        Runs the quantum circuit iteratively over a 3D sequence tensor.
-        Input: (Samples, Time_Steps, Features)
-        Output: PyTorch Tensor (Samples, Qubits, Time_Steps) -> Ready for Conv1D
-        """
-        n_samples, n_steps, n_features = X_seq.shape
-        # Shape optimized for PyTorch Conv1D input (Batch, Channels, Length)
-        extracted = np.zeros((n_samples, self.n_qubits, n_steps))
-
-        for i in range(n_samples):
-            for t in range(n_steps):
-                # Run the circuit for this specific time step
-                exp_vals = self.qnode(X_seq[i, t, :], self.weights)
-                extracted[i, :, t] = exp_vals
-
-        return torch.tensor(extracted, dtype=torch.float32)
+# Original
+# class QuantumKernelNetwork:
+#     """
+#     Acts as a Quantum Feature Extractor.
+#     Maps classical data into a higher-dimensional Hilbert space using
+#     Angle Embedding and Strongly Entangling Layers, returning Pauli-Z expectations.
+#     """
+#
+#     def __init__(self, n_qubits=3, layers=2):
+#         self.n_qubits = n_qubits
+#         self.layers = layers
+#         self.dev = qml.device("default.qubit", wires=self.n_qubits)
+#
+#         # Initialize fixed random weights for the entanglement ansatz
+#         # (This acts as a deterministic, non-linear quantum kernel projection)
+#         np.random.seed(42)
+#         self.weights = pnp.array(np.random.randn(self.layers, self.n_qubits, 3), requires_grad=False)
+#
+#         @qml.qnode(self.dev, interface="autograd")
+#         def quantum_feature_map(inputs, weights):
+#             # Pad inputs to match qubit count if necessary
+#             padded_inputs = pnp.zeros(self.n_qubits)
+#             for i in range(min(len(inputs), self.n_qubits)):
+#                 padded_inputs[i] = inputs[i]
+#
+#             # Embed classical features into quantum phases
+#             qml.AngleEmbedding(padded_inputs, wires=range(self.n_qubits))
+#
+#             # Create highly entangled feature topology
+#             qml.StronglyEntanglingLayers(weights, wires=range(self.n_qubits))
+#
+#             # Measure expectation value of each qubit
+#             return [qml.expval(qml.PauliZ(i)) for i in range(self.n_qubits)]
+#
+#         self.qnode = quantum_feature_map
+#
+#     def extract_temporal_quantum_features(self, X_seq):
+#         """
+#         Runs the quantum circuit iteratively over a 3D sequence tensor.
+#         Input: (Samples, Time_Steps, Features)
+#         Output: PyTorch Tensor (Samples, Qubits, Time_Steps) -> Ready for Conv1D
+#         """
+#         n_samples, n_steps, n_features = X_seq.shape
+#         # Shape optimized for PyTorch Conv1D input (Batch, Channels, Length)
+#         extracted = np.zeros((n_samples, self.n_qubits, n_steps))
+#
+#         for i in range(n_samples):
+#             for t in range(n_steps):
+#                 # Run the circuit for this specific time step
+#                 exp_vals = self.qnode(X_seq[i, t, :], self.weights)
+#                 extracted[i, :, t] = exp_vals
+#
+#         return torch.tensor(extracted, dtype=torch.float32)
 
 
 class TemporalAttention(nn.Module):
@@ -186,30 +186,105 @@ class FocalLoss(nn.Module):
 #         context, _ = self.attention(lstm_out)
 #         return self.fc_block(context)
 
+# ORIGINAL!!!
+# class ScaledQuantumTemporalConvNet(nn.Module):
+#     def __init__(self, in_channels=4, seq_len=4):  # explicitly set in_channels=4
+#         super(ScaledQuantumTemporalConvNet, self).__init__()
+#
+#         # Reduced dimension: 4 features don't need 32 channels. 16 is enough.
+#         self.conv1 = nn.Conv1d(in_channels, 16, kernel_size=3, padding=1)
+#         self.bn = nn.BatchNorm1d(16)
+#
+#         # Single-layer LSTM is plenty for a 4-step sequence
+#         self.lstm = nn.LSTM(16, 32, batch_first=True, bidirectional=True)
+#
+#         self.attention = TemporalAttention(hidden_size=64)
+#
+#         # Simpler head to prevent overfitting
+#         self.fc = nn.Sequential(
+#             nn.Linear(64, 32),
+#             nn.ReLU(),
+#             nn.Linear(32, 1)
+#         )
+#
+#     def forward(self, x):
+#         # x: (Batch, 4, 4)
+#         x = F.relu(self.bn(self.conv1(x)))
+#         x = x.permute(0, 2, 1)  # (Batch, 4, 16)
+#         lstm_out, _ = self.lstm(x)
+#         context, _ = self.attention(lstm_out)
+#         return self.fc(context)
+
 class ScaledQuantumTemporalConvNet(nn.Module):
-    def __init__(self, in_channels=4, seq_len=4):  # explicitly set in_channels=4
+    def __init__(self, in_channels=4, seq_len=4, conv_out=16, lstm_hidden=32):
         super(ScaledQuantumTemporalConvNet, self).__init__()
 
-        # Reduced dimension: 4 features don't need 32 channels. 16 is enough.
-        self.conv1 = nn.Conv1d(in_channels, 16, kernel_size=3, padding=1)
-        self.bn = nn.BatchNorm1d(16)
+        # Dynamic Dimensions tuned by PSO
+        self.conv1 = nn.Conv1d(in_channels, conv_out, kernel_size=3, padding=1)
+        self.bn = nn.BatchNorm1d(conv_out)
 
-        # Single-layer LSTM is plenty for a 4-step sequence
-        self.lstm = nn.LSTM(16, 32, batch_first=True, bidirectional=True)
+        self.lstm = nn.LSTM(conv_out, lstm_hidden, batch_first=True, bidirectional=True)
 
-        self.attention = TemporalAttention(hidden_size=64)
+        # Temporal Attention hidden size is 2x lstm_hidden due to bidirectional
+        self.attention = TemporalAttention(hidden_size=lstm_hidden * 2)
 
-        # Simpler head to prevent overfitting
         self.fc = nn.Sequential(
-            nn.Linear(64, 32),
+            nn.Linear(lstm_hidden * 2, lstm_hidden),
             nn.ReLU(),
-            nn.Linear(32, 1)
+            nn.Linear(lstm_hidden, 1)
         )
 
     def forward(self, x):
-        # x: (Batch, 4, 4)
+        # x: (Batch, in_channels, seq_len)
         x = F.relu(self.bn(self.conv1(x)))
-        x = x.permute(0, 2, 1)  # (Batch, 4, 16)
+        x = x.permute(0, 2, 1)  # (Batch, seq_len, conv_out)
         lstm_out, _ = self.lstm(x)
         context, _ = self.attention(lstm_out)
         return self.fc(context)
+
+
+class QuantumKernelNetwork:
+    """
+    Acts as a Quantum Feature Extractor.
+    Dynamically swaps between Strong and Basic Entanglement topologies based on PSO optimization.
+    """
+
+    def __init__(self, n_qubits=3, layers=2, entangling_type="StronglyEntangling"):
+        self.n_qubits = n_qubits
+        self.layers = layers
+        self.entangling_type = entangling_type
+        self.dev = qml.device("default.qubit", wires=self.n_qubits)
+
+        np.random.seed(42)
+        # Strong Entangling needs 3 weights per qubit, Basic only needs 1
+        if self.entangling_type == "StronglyEntangling":
+            self.weights = pnp.array(np.random.randn(self.layers, self.n_qubits, 3), requires_grad=False)
+        else:
+            self.weights = pnp.array(np.random.randn(self.layers, self.n_qubits), requires_grad=False)
+
+        @qml.qnode(self.dev, interface="autograd")
+        def quantum_feature_map(inputs, weights):
+            padded_inputs = pnp.zeros(self.n_qubits)
+            for i in range(min(len(inputs), self.n_qubits)):
+                padded_inputs[i] = inputs[i]
+
+            qml.AngleEmbedding(padded_inputs, wires=range(self.n_qubits))
+
+            # Apply optimized entanglement topology
+            if self.entangling_type == "StronglyEntangling":
+                qml.StronglyEntanglingLayers(weights, wires=range(self.n_qubits))
+            else:
+                qml.BasicEntanglerLayers(weights, wires=range(self.n_qubits))
+
+            return [qml.expval(qml.PauliZ(i)) for i in range(self.n_qubits)]
+
+        self.qnode = quantum_feature_map
+
+    def extract_temporal_quantum_features(self, X_seq):
+        n_samples, n_steps, n_features = X_seq.shape
+        extracted = np.zeros((n_samples, self.n_qubits, n_steps))
+        for i in range(n_samples):
+            for t in range(n_steps):
+                exp_vals = self.qnode(X_seq[i, t, :], self.weights)
+                extracted[i, :, t] = exp_vals
+        return torch.tensor(extracted, dtype=torch.float32)
