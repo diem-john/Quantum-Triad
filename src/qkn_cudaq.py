@@ -57,7 +57,7 @@ class CudaQQuantumKernelNetwork:
         elif cudaq.has_target("qpp-cpu"):
             cudaq.set_target("qpp-cpu")
 
-        rng = np.random.default_rng(seed)
+        rng = np.random.RandomState(seed)
         if entangling_type == "StronglyEntangling":
             self.weights = rng.standard_normal(
                 (layers, n_qubits, 3), dtype=np.float64
