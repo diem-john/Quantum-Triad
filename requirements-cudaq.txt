@@ -1,0 +1,4 @@
+# Optional CUDA-Q backend dependencies for Quantum-Triad.
+# CUDA-Q currently supports Python 3.11+ and Linux/macOS ARM64;
+# Windows users should use WSL2 for CUDA-Q GPU workflows.
+cudaq==0.16.0.post1
