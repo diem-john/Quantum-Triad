@@ -96,8 +96,11 @@ class CudaQQuantumKernelNetwork:
                         rz(weights[offset + 2], q[i])
 
                     if n_qubits > 1:
+                        # Match PennyLane StronglyEntanglingLayers default:
+                        # range = layer_index % (n_wires - 1) + 1.
+                        entangling_range = layer % (n_qubits - 1) + 1
                         for i in range(n_qubits):
-                            x.ctrl(q[i], q[(i + 1) % n_qubits])
+                            x.ctrl(q[i], q[(i + entangling_range) % n_qubits])
             else:
                 # PennyLane BasicEntanglerLayers uses RX rotations followed
                 # by ring CNOTs.
