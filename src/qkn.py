@@ -111,7 +111,10 @@ class QuantumSpatiotemporalGNN(nn.Module):
         return out.view(b_size, n_nodes)
 
 
-class QuantumKernelNetwork:
+from src.qkn_interface import QKNBackend
+
+
+class QuantumKernelNetwork(QKNBackend):
     """
     Acts as a Quantum Feature Extractor.
     Dynamically swaps topologies and depth based on Optuna's Bayesian suggestions.
