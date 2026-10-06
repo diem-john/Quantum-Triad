@@ -34,7 +34,7 @@ def convert_df_to_csv(df):
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Q-Rating Chaos", layout="wide")
-st.title("⚡ Q-Rating Chaos: A Tri-Partite Quantum Framework for Typhoon Modeling and Microgrid Resilience")
+st.title(" Q-Rating Chaos: A Tri-Partite Quantum Framework for Typhoon Modeling and Microgrid Resilience")
 st.subheader("ⓒ Engr. D.J. Medina 2026")
 st.markdown(
     "Interactive POC: Quantum Kernel Networks, Conformal Prediction, and Quantum Walks for Typhoon Risk Modeling in Chiayi, Taiwan.")
@@ -113,21 +113,21 @@ if 'bus_train' not in st.session_state:
 
 # --- TAB NAVIGATION ---
 # tab1, tab2, tab3, tab4, tab5 = st.tabs([
-#     "📍 Phase 1: Geo-Extraction",
-#     "⚛️ Phase 2: Quantum Training",
-#     "🛡️ Phase 3: Uncertainty Calibration",
-#     "🧪 Phase 4: Inference Testing",
-#     "🌊 Phase 5: CTQW Islanding"
+#     " Phase 1: Geo-Extraction",
+#     " Phase 2: Quantum Training",
+#     " Phase 3: Uncertainty Calibration",
+#     " Phase 4: Inference Testing",
+#     " Phase 5: CTQW Islanding"
 # ])
 
 # --- TAB NAVIGATION ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📍 Phase 1: Geo-Extraction",
-    "🐝 Phase 2: Global Optimization",
-    "⚛️ Phase 3: Quantum Training",
-    "🛡️ Phase 4: Uncertainty Calibration",
-    "🧪 Phase 5: Inference Testing",
-    "🌊 Phase 6: CTQW Islanding"
+    " Phase 1: Geo-Extraction",
+    " Phase 2: Global Optimization",
+    " Phase 3: Quantum Training",
+    " Phase 4: Uncertainty Calibration",
+    " Phase 5: Inference Testing",
+    " Phase 6: CTQW Islanding"
 ])
 
 # --- TAB 1: MAPPING & DATA EXTRACTION (GNN COMPATIBLE) ---
@@ -157,7 +157,7 @@ with tab1:
                     df_tw = df[(df['lat'] >= 21) & (df['lat'] <= 26) & (df['lng'] >= 118) & (df['lng'] <= 123)].copy()
 
                     if df_tw.empty:
-                        st.error("⚠️ No historical typhoons found near Taiwan.")
+                        st.error(" No historical typhoons found near Taiwan.")
                         st.stop()
 
                     taiwan_seq_ids = df_tw['seq_id'].unique()[-ids:]
@@ -294,12 +294,12 @@ with tab1:
                         f"Extracted {len(final_snapshots)} Graph Snapshots (Total: {len(final_snapshots) * 33} bus evaluations).")
 
                 except Exception as e:
-                    st.error(f"⚠️ An error occurred: {e}")
+                    st.error(f" An error occurred: {e}")
 
     # --- PRE-OPTIMIZATION RAW SNAPSHOT VIEWER ---
     if st.session_state.get('coresets_generated', False):
         st.divider()
-        st.markdown("### 🔍 Raw Grid Snapshot Viewer")
+        st.markdown("###  Raw Grid Snapshot Viewer")
         st.write(
             "Inspect the physical distribution of quantum-scaled features (in radians) and failure labels across the grid *before* applying feature selection.")
 
@@ -378,7 +378,7 @@ with tab1:
     # --- META-HEURISTIC FEATURE SELECTION (CGWO) ---
     if st.session_state.get('coresets_generated', False):
         st.divider()
-        st.markdown("### 🐺 Sequence-Aware Information Bottleneck (Binary CGWO)")
+        st.markdown("###  Sequence-Aware Information Bottleneck (Binary CGWO)")
         st.write(
             "A Chaotic Grey Wolf Optimizer hunting for the optimal combination of temporal features across the entire graph topology.")
 
@@ -400,7 +400,7 @@ with tab1:
                 Y_proxy = Y_raw.reshape(-1)
 
                 if len(np.unique(Y_proxy)) < 2:
-                    st.error("⚠️ Data Imbalance: No failures detected. Adjust sliders.")
+                    st.error(" Data Imbalance: No failures detected. Adjust sliders.")
                     st.stop()
 
                 X_train, X_test, y_train, y_test = train_test_split(
@@ -483,7 +483,7 @@ with tab1:
             active_mask = st.session_state.cgwo_best_mask
             selected_features = [feature_cols_all[j] for j in range(len(active_mask)) if active_mask[j] == 1]
 
-            st.info(f"🐺 **Alpha Wolf Optimal Subset:** {', '.join(selected_features)}")
+            st.info(f" **Alpha Wolf Optimal Subset:** {', '.join(selected_features)}")
 
             if st.button("Lock Topology & Formulate Quantum Graph Dataset"):
                 import os
@@ -514,7 +514,7 @@ with tab1:
 
                 # --- VISUALIZATIONS ---
                 st.divider()
-                st.markdown("### 📊 Graph Dataset Visualizations")
+                st.markdown("###  Graph Dataset Visualizations")
 
                 # Flatten just the most recent timestep for visualization
                 # X_flat shape: (N*33, Selected)
@@ -575,12 +575,12 @@ with tab1:
 
 # --- TAB 2: PHASE 2 - BAYESIAN OPTIMIZATION (OPTUNA) ---
 with tab2:
-    st.markdown("### 🧬 Phase 2: Bayesian Hyperparameter Optimization")
+    st.markdown("###  Phase 2: Bayesian Hyperparameter Optimization")
     st.info(
         "Optimize the Quantum Circuit topology and the Quantum Spatiotemporal GNN parameters using Tree-structured Parzen Estimator (TPE) Bayesian search.")
 
     if not st.session_state.get('data_loaded', False):
-        st.warning("⚠️ Please complete the Data Extraction in Tab 1 first.")
+        st.warning(" Please complete the Data Extraction in Tab 1 first.")
     else:
         col1, col2 = st.columns([1, 2])
 
@@ -612,7 +612,7 @@ with tab2:
             optuna.logging.set_verbosity(optuna.logging.WARNING)
 
             try:
-                bo_status.info("🧬 Bayesian Engine Deployed. Mapping Quantum-Graph-Temporal hyper-surface...")
+                bo_status.info(" Bayesian Engine Deployed. Mapping Quantum-Graph-Temporal hyper-surface...")
 
                 X_seq_raw = st.session_state.X_seq_train[:proxy_samples]
                 y_train_raw = st.session_state.y_train[:proxy_samples]
@@ -690,19 +690,19 @@ with tab2:
                     bo_params_display.json(study.best_params)
 
                 st.session_state.bo_best_params = study.best_params
-                bo_status.success("✅ Bayesian Optimization Complete! Architecture locked. Proceed to Phase 3.")
+                bo_status.success(" Bayesian Optimization Complete! Architecture locked. Proceed to Phase 3.")
 
             except Exception as e:
-                bo_status.error(f"⚠️ BO Error: {e}")
+                bo_status.error(f" BO Error: {e}")
 
 # --- TAB 3: PHASE 3 - HYBRID DL TRAINING ---
 with tab3:
-    st.markdown("### 🧠 Phase 3: Quantum-LSTM Training & Hyperparameter Tuning")
+    st.markdown("###  Phase 3: Quantum-LSTM Training & Hyperparameter Tuning")
     st.info(
         "Configure the network architecture, embed the classical data into a Hilbert space, and train the PyTorch Graph Network.")
 
     if not st.session_state.get('data_loaded', False):
-        st.warning("⚠️ Please complete the Data Extraction and Optimization in prior tabs first.")
+        st.warning(" Please complete the Data Extraction and Optimization in prior tabs first.")
     else:
         col1, col2 = st.columns([1, 2])
 
@@ -741,10 +741,10 @@ with tab3:
 
             elif config_mode == "Use Cached Optimization":
                 if 'bo_best_params' in st.session_state:
-                    st.success("✅ Found cached BO parameters:")
+                    st.success(" Found cached BO parameters:")
                     st.json(st.session_state.bo_best_params)
                 else:
-                    st.warning("⚠️ No cached parameters found. Will run with default fallback values.")
+                    st.warning(" No cached parameters found. Will run with default fallback values.")
 
             st.markdown("#### Step 3: Training Config")
             epochs = st.number_input("Training Epochs:", min_value=5, max_value=200, value=25, step=5)
@@ -776,7 +776,7 @@ with tab3:
             # --- PARAMETER RESOLUTION BLOCK ---
             if config_mode == "Run New Bayesian Search (Optuna)":
                 optuna.logging.set_verbosity(optuna.logging.WARNING)
-                telemetry_status.info("🧬 Running Bayesian Search...")
+                telemetry_status.info(" Running Bayesian Search...")
 
 
                 def objective(trial):
@@ -825,7 +825,7 @@ with tab3:
                 c_conv, c_gat, c_lstm, c_lr, c_drop = params['conv_out'], params['gat_heads'], params['lstm_hidden'], \
                 params['lr'], params['dropout']
                 telemetry_status.success(
-                    f"✅ BO Complete! Qubits:{q_qubits}, Entanglement:{q_entangle}, LR:{c_lr:.4f}, Lstm:{c_lstm}")
+                    f" BO Complete! Qubits:{q_qubits}, Entanglement:{q_entangle}, LR:{c_lr:.4f}, Lstm:{c_lstm}")
 
             elif config_mode == "Use Cached Optimization":
                 if 'bo_best_params' in st.session_state:
@@ -840,7 +840,7 @@ with tab3:
                     c_conv, c_gat, c_lstm, c_lr, c_drop = 16, 2, 32, 0.005, 0.3
 
             # --- TRAINING BLOCK ---
-            telemetry_status.info("⚡ Extracting full dataset through Quantum Kernel Network...")
+            telemetry_status.info(" Extracting full dataset through Quantum Kernel Network...")
 
             qkn = create_qkn(st.session_state.get("qkn_backend", "pennylane"), n_qubits=q_qubits, layers=q_layers, entangling_type=q_entangle)
             X_train_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_train)
@@ -863,7 +863,7 @@ with tab3:
             edge_index = torch.tensor([[i, j] for i in range(num_nodes) for j in range(num_nodes) if i != j],
                                       dtype=torch.long).t()
 
-            telemetry_status.info("🚀 Initializing PyTorch Graph and Beginning Training...")
+            telemetry_status.info(" Initializing PyTorch Graph and Beginning Training...")
 
             model = QuantumSpatiotemporalGNN(in_channels=q_qubits, seq_len=dynamic_seq_len, conv_out=c_conv,
                                              gat_heads=c_gat, lstm_hidden=c_lstm, dropout=c_drop)
@@ -944,12 +944,12 @@ with tab3:
                 'c_conv': c_conv, 'c_gat': c_gat, 'c_lstm': c_lstm, 'c_drop': c_drop
             }
             st.session_state.model_trained = True
-            telemetry_status.success(f"✅ Training Complete! Best Val Loss ({best_val_loss:.4f}) locked and saved.")
+            telemetry_status.success(f" Training Complete! Best Val Loss ({best_val_loss:.4f}) locked and saved.")
 
         # --- QUANTUM KERNEL INSPECTOR ---
         if st.session_state.get('model_trained', False) and 'X_train_q_numpy' in st.session_state:
             st.divider()
-            st.markdown("### 🔬 Quantum Kernel & Embedding Inspector")
+            st.markdown("###  Quantum Kernel & Embedding Inspector")
             st.write(
                 "Visualize how the Quantum Circuit embedded your topological features into the Hilbert space, and see the resulting **Gram Matrix (Quantum Kernel)** that gets fed into the Graph Neural Network.")
 
@@ -991,11 +991,11 @@ with tab3:
 
 # --- TAB 4: PHASE 4 - CONFORMAL CALIBRATION ---
 with tab4:
-    st.markdown("### 🛡️ Phase 4: Conformal Calibration")
+    st.markdown("###  Phase 4: Conformal Calibration")
     st.info("Calculate the Non-Conformity Threshold (q_hat) using the calibration dataset. This threshold guarantees our target error rate during out-of-sample inference.")
 
     if not st.session_state.get('model_trained', False):
-        st.warning("⚠️ Please train the model in Tab 3 first.")
+        st.warning(" Please train the model in Tab 3 first.")
     else:
         col1, col2 = st.columns([1, 2])
 
@@ -1030,7 +1030,7 @@ with tab4:
             import plotly.express as px
 
             try:
-                cp_status.info("📐 Calculating Non-Conformity Scores on Calibration set...")
+                cp_status.info(" Calculating Non-Conformity Scores on Calibration set...")
 
                 # Retrieve saved calibration probabilities and labels from Tab 3
                 cal_probs = st.session_state.cal_probs
@@ -1065,10 +1065,10 @@ with tab4:
                                    annotation_text=f"q_hat = {q_hat:.3f}")
                 dist_chart.plotly_chart(fig_dist, use_container_width=True)
 
-                cp_status.success("✅ Calibration Complete! Threshold locked. Proceed to Phase 5 for Out-of-Sample Inference.")
+                cp_status.success(" Calibration Complete! Threshold locked. Proceed to Phase 5 for Out-of-Sample Inference.")
 
             except Exception as e:
-                cp_status.error(f"⚠️ Calibration Error: {e}")
+                cp_status.error(f" Calibration Error: {e}")
 
 # --- TAB 5: PHASE 5 - INFERENCE TESTING ---
 with tab5:
@@ -1077,7 +1077,7 @@ with tab5:
     if 'y_pred_qcp' not in st.session_state: st.session_state.y_pred_qcp = None
 
     if not st.session_state.get('model_trained', False):
-        st.error("⚠️ Model not found. Please complete Phase 3 first.")
+        st.error(" Model not found. Please complete Phase 3 first.")
     else:
         # Fallback to calculate q_hat if it wasn't saved in Tab 4
         if 'q_hat' not in st.session_state:
@@ -1086,7 +1086,7 @@ with tab5:
             scores = 1.0 - (cal_probs * y_cal_flat + (1 - cal_probs) * (1 - y_cal_flat))
             st.session_state.q_hat = np.quantile(scores, 0.90)  # Default alpha = 0.10
 
-        st.markdown("### 🧪 Phase 5: Out-of-Sample Inference Testing")
+        st.markdown("###  Phase 5: Out-of-Sample Inference Testing")
         st.write(
             f"Evaluating model reliability on unseen test data using the established conformal threshold $q_{{\hat{{h}}}}$ = **{st.session_state.q_hat:.4f}**.")
 
@@ -1211,7 +1211,7 @@ with tab5:
             m_qcp = get_metrics(y_test, y_qcp)
 
             # --- PREDICTION CONFIDENCE ---
-            st.markdown("#### 🎯 Conformal Set Efficiency")
+            st.markdown("####  Conformal Set Efficiency")
 
             c_count = st.session_state.certain_count
             a_count = st.session_state.ambiguous_count
@@ -1237,9 +1237,9 @@ with tab5:
 
             with col_stats:
                 st.write("**Model Autonomy vs. Intervention**")
-                st.metric("✅ Certain Predictions (Model is Sure)", f"{c_pct:.1f}%", f"{c_count} samples",
+                st.metric(" Certain Predictions (Model is Sure)", f"{c_pct:.1f}%", f"{c_count} samples",
                           delta_color="normal")
-                st.metric("⚠️ Ambiguous Sets (Needs Intervention)", f"{a_pct:.1f}%", f"{a_count} samples",
+                st.metric(" Ambiguous Sets (Needs Intervention)", f"{a_pct:.1f}%", f"{a_count} samples",
                           delta_color="inverse")
                 st.caption(
                     "A well-calibrated model balances high reliability with a low ambiguity rate. Ambiguous sets trigger Phase 6 Islanding.")
@@ -1247,7 +1247,7 @@ with tab5:
             st.divider()
 
             # --- PERFORMANCE COMPARISON ---
-            st.markdown("#### 📊 Performance Comparison")
+            st.markdown("####  Performance Comparison")
             cols = st.columns(4)
             metrics = ["Acc", "Pre", "Rec", "F1"]
             for i, name in enumerate(metrics):
@@ -1267,7 +1267,7 @@ with tab5:
                             use_container_width=True)
 
             # --- ALERT LEDGER ---
-            st.markdown("#### 📋 Node Alert Report")
+            st.markdown("####  Node Alert Report")
             df_res = st.session_state.final_results
 
             # Restrict displayed columns to avoid overwhelming the view, specifically exposing the Raw Probability
@@ -1284,16 +1284,16 @@ with tab5:
                 risky_bus_list = df_res[df_res["Alert_Level"].isin(["High", "Uncertain"])]["Bus_ID"].tolist()
                 st.session_state.risky_buses = list(set(risky_bus_list))
 
-                st.success("✅ Alerts committed. Proceed to Phase 6 (Quantum Islanding).")
+                st.success(" Alerts committed. Proceed to Phase 6 (Quantum Islanding).")
 
 # --- TAB 6: PHASE 6 - QUANTUM WALK ISLANDING ---
 with tab6:
-    st.markdown("### 🌊 Phase 6: Post-Disaster Quantum Islanding")
+    st.markdown("###  Phase 6: Post-Disaster Quantum Islanding")
     st.info(
         "Simulate grid fracture using the RAW inference probabilities from Phase 5. Adjust the threshold to explore different disaster severity scenarios. Analyzes cascading failures using Continuous-Time Quantum Walks (CTQW).")
 
     if not st.session_state.get('inference_complete', False):
-        st.warning("⚠️ Please complete Out-of-Sample Inference in Tab 5 first to generate the storm probabilities.")
+        st.warning(" Please complete Out-of-Sample Inference in Tab 5 first to generate the storm probabilities.")
     else:
         col1, col2 = st.columns([1, 2])
 
@@ -1423,7 +1423,7 @@ with tab6:
                     # --- 4. QUANTUM CASCADE ANALYSIS (Deep Dive) ---
                     if failed_nodes:
                         st.divider()
-                        st.markdown("#### ⚛️ Quantum Cascade & Buffer Zone Analysis")
+                        st.markdown("####  Quantum Cascade & Buffer Zone Analysis")
                         st.write(
                             "Using Continuous-Time Quantum Walks (CTQW) on the intact Adjacency Matrix to calculate probability density and identify cascading risk zones before fracture.")
 
@@ -1481,4 +1481,4 @@ with tab6:
                             st.plotly_chart(fig_ctqw, use_container_width=True)
 
             except Exception as e:
-                island_plot.error(f"⚠️ Islanding Error: {e}")
+                island_plot.error(f" Islanding Error: {e}")
