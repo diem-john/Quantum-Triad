@@ -398,6 +398,7 @@ with tab1:
                 # Proxy shape: (N*33, 4, 4) -> (N*33, 16)
                 X_proxy = X_raw.reshape(-1, X_raw.shape[2], X_raw.shape[3]).reshape(-1, 16)
                 Y_proxy = Y_raw.reshape(-1)
+
                 if len(np.unique(Y_proxy)) < 2:
                     st.error("⚠️ Data Imbalance: No failures detected. Adjust sliders.")
                     st.stop()
@@ -805,7 +806,8 @@ with tab3:
                     for _ in range(3):
                         optimizer_bo.zero_grad()
                         out = model_bo(X_p_q, edge_idx)
-                        out_clamped = torch.clamp(out, 1e-7, 1.0 - 1e-7)                        loss = criterion_bo(out_clamped, y_p_t.view_as(out_clamped))
+                        out_clamped = torch.clamp(out, 1e-7, 1.0 - 1e-7)
+                        loss = criterion_bo(out_clamped, y_p_t.view_as(out_clamped))
                         loss.backward()
                         optimizer_bo.step()
                     return loss.item()
@@ -1207,6 +1209,7 @@ with tab5:
 
             m_raw = get_metrics(y_test, y_raw)
             m_qcp = get_metrics(y_test, y_qcp)
+
             # --- PREDICTION CONFIDENCE ---
             st.markdown("#### 🎯 Conformal Set Efficiency")
 
