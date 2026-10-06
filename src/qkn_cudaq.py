@@ -21,7 +21,10 @@ except ImportError:
 EntanglingType = Literal["StronglyEntangling", "BasicEntangler"]
 
 
-class CudaQQuantumKernelNetwork:
+from src.qkn_interface import QKNBackend
+
+
+class CudaQQuantumKernelNetwork(QKNBackend):
     """CUDA-Q implementation of the Quantum-Triad quantum feature extractor."""
 
     def __init__(
