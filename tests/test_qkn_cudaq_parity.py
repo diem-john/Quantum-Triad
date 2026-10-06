@@ -7,7 +7,9 @@ pytest.importorskip("cudaq")
 torch = pytest.importorskip("torch")
 
 from src.qkn import QuantumKernelNetwork
+from src.qkn_backend import create_qkn
 from src.qkn_cudaq import CudaQQuantumKernelNetwork
+from src.qkn_interface import QKNBackend
 
 
 @pytest.mark.parametrize("entangling_type", ["StronglyEntangling", "BasicEntangler"])
@@ -57,3 +59,24 @@ def test_temporal_output_contract():
     assert isinstance(output, torch.Tensor)
     assert output.shape == (1, 2, 3, 2)
     assert output.dtype == torch.float32
+
+
+@pytest.mark.parametrize("backend_name", ["pennylane", "cudaq"])
+def test_backend_factory_returns_common_contract(backend_name):
+    backend = create_qkn(
+        backend_name,
+        n_qubits=3,
+        layers=1,
+        entangling_type="StronglyEntangling",
+        **({"target": "qpp-cpu"} if backend_name == "cudaq" else {}),
+    )
+    assert isinstance(backend, QKNBackend)
+    assert backend.n_qubits == 3
+    assert backend.layers == 1
+    assert backend.entangling_type == "StronglyEntangling"
+    assert callable(backend.extract_temporal_quantum_features)
+
+
+def test_factory_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="pennylane.*cudaq"):
+        create_qkn("unknown")
