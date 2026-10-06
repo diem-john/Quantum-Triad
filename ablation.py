@@ -16,10 +16,10 @@ from sklearn.linear_model import RidgeClassifier
 # Assuming your models are in src.qkn
 from src.qkn import QuantumKernelNetwork, QuantumSpatiotemporalGNN
 
-st.set_page_config(page_title="Exhaustive Ablation Study", page_icon="🔬", layout="wide")
+st.set_page_config(page_title="Exhaustive Ablation Study", page_icon="", layout="wide")
 
 # --- CONFIGURATION & UI ---
-st.title("🔬 16-State Exhaustive Pipeline Ablation Study")
+st.title(" 16-State Exhaustive Pipeline Ablation Study")
 st.write(
     "Isolating the performance impact of **Quantum Embeddings (QKN vs GAF)**, **Feature Optimization (CGWO)**, **Hyperparameter Tuning (BO)**, and **Quantum Conformal Prediction (QCP)**."
 )
@@ -32,7 +32,7 @@ with st.sidebar:
     BATCH_SIZE = st.selectbox("Batch Size:", [8, 16, 32], index=1)
 
     st.divider()
-    if st.button("🧹 Clear Results Cache", use_container_width=True):
+    if st.button(" Clear Results Cache", use_container_width=True):
         if 'ablation_results' in st.session_state:
             del st.session_state['ablation_results']
             st.rerun()
@@ -83,11 +83,11 @@ def get_data():
 # --- 2. DYNAMIC CGWO (Fixed to Alpha Wolf Subset) ---
 def run_cgwo(X_train, Y_train, ui_placeholder):
     max_iter = 10
-    progress_bar = ui_placeholder.progress(0, text="🐺 CGWO: Initializing Pack...")
+    progress_bar = ui_placeholder.progress(0, text=" CGWO: Initializing Pack...")
 
     for it in range(max_iter):
         time.sleep(0.05)
-        progress_bar.progress((it + 1) / max_iter, text=f"🐺 CGWO Optimization: Iteration {it + 1}/{max_iter}")
+        progress_bar.progress((it + 1) / max_iter, text=f" CGWO Optimization: Iteration {it + 1}/{max_iter}")
 
     ui_placeholder.empty()
     return np.array([1, 0, 0, 1]) # ['Wind Speed', 'Delta Wind', 'Distance to Eye', 'Coastal Vuln']
@@ -95,11 +95,11 @@ def run_cgwo(X_train, Y_train, ui_placeholder):
 
 # --- 3. DYNAMIC BO (Fixed to Pre-Computed Optimal Hyperparameters) ---
 def run_bo(X_train, y_train, feature_mask, seq_len, ui_placeholder):
-    progress_bar = ui_placeholder.progress(0, text="🔬 Optuna BO: Initializing Trials...")
+    progress_bar = ui_placeholder.progress(0, text=" Optuna BO: Initializing Trials...")
 
     for i in range(BO_TRIALS):
         time.sleep(0.01)
-        progress_bar.progress((i + 1) / BO_TRIALS, text=f"🔬 Optuna BO: Trial {i + 1}/{BO_TRIALS} Completed")
+        progress_bar.progress((i + 1) / BO_TRIALS, text=f" Optuna BO: Trial {i + 1}/{BO_TRIALS} Completed")
 
     ui_placeholder.empty()
     return {
@@ -161,7 +161,7 @@ def train_and_evaluate(X_train, y_train, X_cal, y_cal, X_test, y_test, params, f
 
     # TRAINING
     model.train()
-    progress_bar = ui_placeholder.progress(0, text="⚙️ Training Model: Epoch 0...")
+    progress_bar = ui_placeholder.progress(0, text=" Training Model: Epoch 0...")
 
     for epoch in range(EPOCHS):
         for inputs, targets in loader:
@@ -177,7 +177,7 @@ def train_and_evaluate(X_train, y_train, X_cal, y_cal, X_test, y_test, params, f
             optimizer.step()
 
         progress_bar.progress((epoch + 1) / EPOCHS,
-                              text=f"⚙️ Training Model: Epoch {epoch + 1}/{EPOCHS} (Loss: {loss.item():.4f})")
+                              text=f" Training Model: Epoch {epoch + 1}/{EPOCHS} (Loss: {loss.item():.4f})")
 
     ui_placeholder.empty()
 
@@ -227,7 +227,7 @@ for q in [False, True]:
                 configs.append({"name": name, "q": q, "cgwo": cgwo, "bo": bo, "qcp": qcp})
 
 if 'ablation_results' not in st.session_state:
-    if st.button("🚀 Run Exhaustive 16-State Ablation Study", type="primary", use_container_width=True):
+    if st.button(" Run Exhaustive 16-State Ablation Study", type="primary", use_container_width=True):
         X_tr, y_tr, X_cal, y_cal, X_te, y_te, seq_len = get_data()
         n_features = X_tr.shape[3]
 
@@ -238,20 +238,20 @@ if 'ablation_results' not in st.session_state:
         inner_progress_ui = st.empty()
 
         # Real-time Chart Placeholders
-        st.markdown("### 📈 Live Performance Trajectory")
+        st.markdown("###  Live Performance Trajectory")
         plot_placeholder = st.empty()
 
-        st.markdown("### 🗃️ Detailed Configuration & Metrics Ledger")
+        st.markdown("###  Detailed Configuration & Metrics Ledger")
         table_placeholder = st.empty()
 
         # Pre-compute CGWO
-        status_text.write("🐺 Pre-computing optimal CGWO mask...")
+        status_text.write(" Pre-computing optimal CGWO mask...")
         cgwo_mask = run_cgwo(X_tr, y_tr, inner_progress_ui)
         all_mask = np.ones(n_features)
 
         # Iterate over all 16 states
         for idx, cfg in enumerate(configs):
-            status_text.write(f"▶️ Running Config {idx + 1}/16: **{cfg['name']}**")
+            status_text.write(f"▶ Running Config {idx + 1}/16: **{cfg['name']}**")
 
             # Determine Mask & Parameters
             f_mask = cgwo_mask if cfg['cgwo'] else all_mask
@@ -308,16 +308,16 @@ if 'ablation_results' not in st.session_state:
                                    text=f"Overall Progress: Config {idx + 1}/{len(configs)} Complete")
 
         st.session_state.ablation_results = pd.DataFrame(results)
-        status_text.success("✅ 16-State Exhaustive Ablation Study Complete!")
+        status_text.success(" 16-State Exhaustive Ablation Study Complete!")
         main_progress.empty()
 
 # --- 6. POST-RUN ANALYSIS ---
 if 'ablation_results' in st.session_state:
     df_res = st.session_state.ablation_results
     st.divider()
-    st.markdown("### 📊 Final Ablation Analysis")
+    st.markdown("###  Final Ablation Analysis")
 
-    st.markdown("#### 💡 Key Impact Metrics (Deltas)")
+    st.markdown("####  Key Impact Metrics (Deltas)")
     col1, col2, col3, col4 = st.columns(4)
 
     try:
