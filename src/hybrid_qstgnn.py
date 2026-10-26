@@ -1,0 +1,109 @@
+"""Hybrid QKN(A+B) feature fusion for the quantum spatiotemporal GNN.
+
+Inputs are raw grid tensors shaped (samples, nodes, time, features). The
+expectation-value branch (A) and fidelity-to-training-landmarks branch (B)
+are computed per node/time step and concatenated into channels expected by
+QuantumSpatiotemporalGNN. Fidelity landmarks are selected from training data
+only and must be persisted for validation, testing, and inference.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+import torch
+
+from src.qkn_kernel import QuantumFidelityKernel
+
+
+@dataclass
+class HybridQSTGNNFeatureEncoder:
+    """Build a leakage-aware A+B quantum representation for graph sequences."""
+
+    n_qubits: int = 3
+    n_landmarks: int = 8
+    random_state: int = 42
+
+    def __post_init__(self):
+        if self.n_qubits < 2:
+            raise ValueError("n_qubits must be >= 2")
+        if self.n_landmarks < 1:
+            raise ValueError("n_landmarks must be >= 1")
+        self.kernel = QuantumFidelityKernel(n_qubits=self.n_qubits)
+        self.landmarks_: np.ndarray | None = None
+
+    @staticmethod
+    def _validate_tensor(X: Any) -> np.ndarray:
+        arr = np.asarray(X, dtype=np.float64)
+        if arr.ndim != 4:
+            raise ValueError("Expected raw X with shape (samples, nodes, time, features).")
+        if arr.shape[0] < 1 or arr.shape[1] < 1 or arr.shape[2] < 1 or arr.shape[3] < 1:
+            raise ValueError("All dimensions of X must be non-empty.")
+        if not np.isfinite(arr).all():
+            raise ValueError("Input grid tensor contains non-finite values.")
+        return arr
+
+    def fit(self, X_train: Any) -> "HybridQSTGNNFeatureEncoder":
+        X = self._validate_tensor(X_train)
+        # Each node/time feature vector is a candidate reference point. Select
+        # references exclusively from training samples to prevent leakage.
+        rows = X.reshape(-1, X.shape[-1])
+        n = min(int(self.n_landmarks), len(rows))
+        rng = np.random.default_rng(self.random_state)
+        chosen = np.sort(rng.choice(len(rows), size=n, replace=False))
+        self.landmarks_ = rows[chosen].copy()
+        return self
+
+    def transform(self, X: Any, qkn_backend: Any) -> torch.Tensor:
+        if self.landmarks_ is None:
+            raise RuntimeError("Call fit(X_train) before transform.")
+        arr = self._validate_tensor(X)
+        # A branch: existing QKN expectation-value feature extractor.
+        A = qkn_backend.extract_temporal_quantum_features(arr)
+        if not isinstance(A, torch.Tensor):
+            A = torch.as_tensor(A, dtype=torch.float32)
+        A = A.detach().cpu().float()
+        expected = (arr.shape[0], arr.shape[1], self.n_qubits, arr.shape[2])
+        if tuple(A.shape) != expected:
+            raise ValueError(f"QKN branch returned {tuple(A.shape)}; expected {expected}.")
+
+        # B branch: for every node/time step, compute fidelity to the train-only
+        # landmark bank. Result shape (samples, nodes, landmarks, time).
+        n_samples, n_nodes, n_steps, n_features = arr.shape
+        rows = arr.reshape(-1, n_features)
+        similarities = self.kernel.matrix(rows, self.landmarks_)
+        B = similarities.reshape(n_samples, n_nodes, n_steps, len(self.landmarks_))
+        B = np.transpose(B, (0, 1, 3, 2)).copy()
+        B = torch.as_tensor(B, dtype=torch.float32)
+
+        # Feature fusion occurs before temporal and graph message passing.
+        return torch.cat([A, B], dim=2).contiguous()
+
+    @property
+    def output_channels(self) -> int:
+        if self.landmarks_ is None:
+            raise RuntimeError("Encoder has not been fitted.")
+        return self.n_qubits + len(self.landmarks_)
+
+    def state_dict(self) -> dict[str, Any]:
+        if self.landmarks_ is None:
+            raise RuntimeError("Encoder has not been fitted.")
+        return {
+            "n_qubits": int(self.n_qubits),
+            "n_landmarks": int(len(self.landmarks_)),
+            "random_state": int(self.random_state),
+            "landmarks": self.landmarks_.tolist(),
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict[str, Any]) -> "HybridQSTGNNFeatureEncoder":
+        encoder = cls(
+            n_qubits=int(state["n_qubits"]),
+            n_landmarks=int(state["n_landmarks"]),
+            random_state=int(state.get("random_state", 42)),
+        )
+        encoder.landmarks_ = np.asarray(state["landmarks"], dtype=np.float64)
+        if encoder.landmarks_.ndim != 2 or encoder.landmarks_.shape[1] < 1:
+            raise ValueError("Invalid landmark array in encoder state.")
+        return encoder
