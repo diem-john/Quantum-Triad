@@ -587,17 +587,32 @@ with tab1:
                 train_cal_idx, test_idx = next(outer_split.split(all_idx, groups=storm_ids))
                 inner_split = GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=43)
                 train_rel, cal_rel = next(inner_split.split(train_cal_idx, groups=storm_ids[train_cal_idx]))
-                train_idx, cal_idx = train_cal_idx[train_rel], train_cal_idx[cal_rel]
+                train_val_idx, cal_idx = train_cal_idx[train_rel], train_cal_idx[cal_rel]
+                # Split the model-development subset again so validation is independent
+                # from the calibration set used by QCP.
+                val_split = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=44)
+                train_rel2, val_rel = next(
+                    val_split.split(train_val_idx, groups=storm_ids[train_val_idx])
+                )
+                train_idx, val_idx = train_val_idx[train_rel2], train_val_idx[val_rel]
 
-                train_storms, cal_storms, test_storms = set(storm_ids[train_idx]), set(storm_ids[cal_idx]), set(storm_ids[test_idx])
-                if train_storms & cal_storms or train_storms & test_storms or cal_storms & test_storms:
+                train_storms = set(storm_ids[train_idx])
+                val_storms = set(storm_ids[val_idx])
+                cal_storms = set(storm_ids[cal_idx])
+                test_storms = set(storm_ids[test_idx])
+                if (
+                    train_storms & val_storms or train_storms & cal_storms or train_storms & test_storms
+                    or val_storms & cal_storms or val_storms & test_storms or cal_storms & test_storms
+                ):
                     st.error("Event split integrity check failed: storm overlap detected.")
                     st.stop()
 
                 st.session_state.X_seq_train, st.session_state.y_train = X_tensor[train_idx], Y_tensor[train_idx]
+                st.session_state.X_seq_val, st.session_state.y_val = X_tensor[val_idx], Y_tensor[val_idx]
                 st.session_state.X_seq_cal, st.session_state.y_cal = X_tensor[cal_idx], Y_tensor[cal_idx]
                 st.session_state.X_seq_test, st.session_state.y_test = X_tensor[test_idx], Y_tensor[test_idx]
                 st.session_state.train_storm_ids = sorted(train_storms)
+                st.session_state.val_storm_ids = sorted(val_storms)
                 st.session_state.cal_storm_ids = sorted(cal_storms)
                 st.session_state.test_storm_ids = sorted(test_storms)
 
@@ -606,23 +621,26 @@ with tab1:
                 # for epoch selection below, so it is not an independent validation set yet.
                 full_labels = Y_tensor.reshape(-1)
                 train_labels = Y_tensor[train_idx].reshape(-1)
+                val_labels = Y_tensor[val_idx].reshape(-1)
                 cal_labels = Y_tensor[cal_idx].reshape(-1)
                 test_labels = Y_tensor[test_idx].reshape(-1)
                 distribution_report = render_label_distribution_audit({
                     "Full dataset before split": full_labels,
                     "Training": train_labels,
-                    "Calibration (also used for validation currently)": cal_labels,
+                    "Validation": val_labels,
+                    "Calibration": cal_labels,
                     "Held-out testing": test_labels,
                 }, title="Full and Partition Label Distributions")
                 st.session_state.label_distribution_report = distribution_report.to_dict("records")
 
                 st.warning(
-                    "Audit note: calibration data is currently also used for validation/model selection. "
-                    "For statistically clean QCP evaluation, create a separate validation split before finalizing results."
+                    "Check the distribution table above. If any partition lacks either class, do not interpret "
+                    "binary Recall/Precision/F1 for that partition as a complete evaluation. Increase the number "
+                    "of storms or revise event-level allocation without splitting a storm across partitions."
                 )
                 st.success(
-                    f"Event-level split: {len(train_storms)} train storms, "
-                    f"{len(cal_storms)} calibration storms, {len(test_storms)} held-out test storms."
+                    f"Event-level split: {len(train_storms)} train, {len(val_storms)} validation, "
+                    f"{len(cal_storms)} calibration, {len(test_storms)} held-out test storms."
                 )
 
                 st.session_state.feature_cols = selected_features
@@ -757,11 +775,11 @@ with tab2:
 
                 X_seq_raw = st.session_state.X_seq_train[:proxy_samples]
                 y_train_raw = st.session_state.y_train[:proxy_samples]
-                X_cal_raw = st.session_state.X_seq_cal[:proxy_samples]
-                y_cal_raw = st.session_state.y_cal[:proxy_samples]
+                X_val_raw = st.session_state.X_seq_val[:proxy_samples]
+                y_val_raw = st.session_state.y_val[:proxy_samples]
 
                 y_proxy = torch.tensor(y_train_raw, dtype=torch.float32)
-                y_cal_t = torch.tensor(y_cal_raw, dtype=torch.float32)
+                y_val_t = torch.tensor(y_val_raw, dtype=torch.float32)
 
                 edge_index, _ = st.session_state.mapper.export_edge_index()
 
@@ -784,7 +802,7 @@ with tab2:
                     qkn = create_qkn(st.session_state.get("qkn_backend", "pennylane"), n_qubits=n_qubits, layers=q_layers, entangling_type=entangling_type)
 
                     X_proxy_q = qkn.extract_temporal_quantum_features(X_seq_raw)
-                    X_cal_q = qkn.extract_temporal_quantum_features(X_cal_raw)
+                    X_val_q = qkn.extract_temporal_quantum_features(X_val_raw)
 
                     model = QuantumSpatiotemporalGNN(
                         in_channels=n_qubits,
@@ -809,9 +827,8 @@ with tab2:
 
                     model.eval()
                     with torch.no_grad():
-                        val_out = model(X_cal_q, edge_index)
-                        # FIX: view_as() applied to validation as well
-                        val_loss = criterion(val_out, y_cal_t.view_as(val_out)).item()
+                        val_out = model(X_val_q, edge_index)
+                        val_loss = criterion(val_out, y_val_t.view_as(val_out)).item()
 
                     if np.isnan(val_loss): return float('inf')
 
@@ -1001,6 +1018,7 @@ with tab3:
                     random_state=42
                 ).fit(st.session_state.X_seq_train)
                 X_train_q = encoder.transform(st.session_state.X_seq_train, qkn)
+                X_val_q = encoder.transform(st.session_state.X_seq_val, qkn)
                 X_cal_q = encoder.transform(st.session_state.X_seq_cal, qkn)
                 os.makedirs("data/processed", exist_ok=True)
                 torch.save(encoder.state_dict(), "data/processed/hybrid_qstgnn_encoder.pt")
@@ -1013,6 +1031,7 @@ with tab3:
                 )
             else:
                 X_train_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_train)
+                X_val_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_val)
                 X_cal_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_cal)
                 model_in_channels = int(q_qubits)
 
@@ -1021,13 +1040,13 @@ with tab3:
 
             # Apply label smoothing to prevent 0.000 logit saturation loss
             y_train_smooth = np.clip(st.session_state.y_train, 0.05, 0.95)
-            y_cal_smooth = np.clip(st.session_state.y_cal, 0.05, 0.95)
+            y_val_smooth = np.clip(st.session_state.y_val, 0.05, 0.95)
 
             y_train_t = torch.tensor(y_train_smooth, dtype=torch.float32)
-            y_cal_t = torch.tensor(y_cal_smooth, dtype=torch.float32)
+            y_val_t = torch.tensor(y_val_smooth, dtype=torch.float32)
 
             train_loader = DataLoader(TensorDataset(X_train_q, y_train_t), batch_size=batch_size, shuffle=True)
-            val_loader = DataLoader(TensorDataset(X_cal_q, y_cal_t), batch_size=batch_size, shuffle=False)
+            val_loader = DataLoader(TensorDataset(X_val_q, y_val_t), batch_size=batch_size, shuffle=False)
 
             # Dynamic edge index for main training
             edge_index, _ = st.session_state.mapper.export_edge_index()
