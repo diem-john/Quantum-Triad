@@ -1,4 +1,4 @@
-"""Matched-split comparison of QKN Approach A, Approach B, and a classical baseline.
+"""Matched-split comparison of QKN Approach A, Approach B, Hybrid A+B, and a classical baseline.
 
 Approach A here isolates the existing QKN expectation-value feature map and uses
 an RBF-SVC downstream classifier. It does NOT run the full spatiotemporal GNN:
@@ -20,7 +20,7 @@ from sklearn.model_selection import train_test_split, GroupShuffleSplit
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.svm import SVC
 
-from src.qkn_kernel import QuantumKernelSVC
+from src.qkn_kernel import QuantumFidelityKernel, QuantumKernelSVC
 from experiments.compare_qkn_kernel import DEFAULT_FEATURES, DEFAULT_LABEL, split_data, evaluate
 
 
@@ -159,6 +159,32 @@ def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
         "per_storm_metrics": per_group_metrics(y_test, B_pred, test_groups),
         "fit_and_predict_seconds": float(time.perf_counter() - start),
         "kernel_train_shape": list(B_model.K_train_.shape),
+    }
+
+    # Hybrid A+B: fuse A's expectation-value embedding with B's fidelity similarities.
+    # Each sample receives kernel similarities to TRAINING samples only; test samples never
+    # become reference points, preventing train/test leakage in the fused representation.
+    start = time.perf_counter()
+    fidelity = QuantumFidelityKernel(n_qubits=n_qubits)
+    B_fusion_train = fidelity.matrix(X_train_q, X_train_q)
+    B_fusion_test = fidelity.matrix(X_test_q, X_train_q)
+    hybrid_train = np.concatenate([A_train, B_fusion_train], axis=1)
+    hybrid_test = np.concatenate([A_test, B_fusion_test], axis=1)
+    hybrid_scaler = StandardScaler()
+    hybrid_train = hybrid_scaler.fit_transform(hybrid_train)
+    hybrid_test = hybrid_scaler.transform(hybrid_test)
+    hybrid_model = SVC(kernel="rbf", C=C, class_weight="balanced", random_state=random_state)
+    hybrid_model.fit(hybrid_train, y_train)
+    hybrid_pred = hybrid_model.predict(hybrid_test)
+    results["models"]["hybrid_qkn_a_plus_b"] = {
+        **evaluate(y_test, hybrid_pred),
+        "per_storm_metrics": per_group_metrics(y_test, hybrid_pred, test_groups),
+        "fit_transform_and_predict_seconds": float(time.perf_counter() - start),
+        "fusion": "concatenation of A Pauli-Z expectation features and B fidelity similarities to training samples",
+        "expectation_feature_shape": list(A_train.shape),
+        "fidelity_similarity_shape": list(B_fusion_train.shape),
+        "fused_feature_shape": list(hybrid_train.shape),
+        "reference_samples": int(len(X_train_q)),
     }
 
     # Classical control.
