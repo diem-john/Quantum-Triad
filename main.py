@@ -2132,6 +2132,11 @@ with tab7:
             "Quantum circuit layers", 1, 4, 2,
             key="integrated_eval_layers"
         )
+        eval_b_weight = st.slider(
+            "Hybrid B-branch weight", 0.0, 1.0, 0.25, 0.05,
+            key="integrated_eval_b_weight",
+            help="Applied only to the B fidelity-similarity features in A+B. A-only and B-only results remain independent baselines."
+        )
         eval_c = st.select_slider(
             "SVM regularization C",
             options=[0.1, 0.5, 1.0, 2.0, 5.0], value=1.0,
@@ -2302,7 +2307,8 @@ with tab7:
                                 C=float(eval_c),
                                 group_column=group_col,
                                 max_samples=0,
-                                layers=int(eval_layers)
+                                layers=int(eval_layers),
+                                b_weight=float(eval_b_weight)
                             )
                         X = work[features].to_numpy(dtype=float)
                         y = work[label_col].to_numpy()
