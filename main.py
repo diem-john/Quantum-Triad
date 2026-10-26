@@ -1498,9 +1498,11 @@ with tab5:
                         weights_only=True
                     )
                     encoder = HybridQSTGNNFeatureEncoder.from_state_dict(encoder_state)
+                    X_val_q = encoder.transform(st.session_state.X_seq_val, qkn)
                     X_test_q = encoder.transform(st.session_state.X_seq_test, qkn)
                     model_in_channels = int(config.get('model_in_channels', encoder.output_channels))
                 else:
+                    X_val_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_val)
                     X_test_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_test)
                     model_in_channels = int(config.get('model_in_channels', config['q_qubits']))
 
@@ -1551,38 +1553,82 @@ with tab5:
 
                 edge_index, _ = st.session_state.mapper.export_edge_index()
 
-                # Format Tensors
+                # Run validation and test inference separately. Validation chooses
+                # binary decision thresholds; the held-out test labels never do.
+                y_val_tensor = torch.tensor(st.session_state.y_val, dtype=torch.float32)
                 y_test_tensor = torch.tensor(st.session_state.y_test, dtype=torch.float32)
+                val_loader = DataLoader(TensorDataset(X_val_q, y_val_tensor), batch_size=16, shuffle=False)
                 test_loader = DataLoader(TensorDataset(X_test_q, y_test_tensor), batch_size=16, shuffle=False)
 
-                test_probs_list = []
-                raw_probs_list = []  # NEW: Collect raw probabilities for Tab 6
+                def collect_probabilities(loader):
+                    raw_batches, calibrated_batches = [], []
+                    with torch.no_grad():
+                        for inputs, _ in loader:
+                            outputs = model(inputs, edge_index)
+                            eps = 1e-7
+                            raw = torch.clamp(outputs, eps, 1.0 - eps)
+                            raw_batches.append(raw.numpy())
+                            logits = torch.log(raw / (1.0 - raw))
+                            calibrated = torch.sigmoid(logits / optimal_T)
+                            calibrated_batches.append(calibrated.numpy())
+                    return (
+                        np.concatenate(raw_batches, axis=0).reshape(-1),
+                        np.concatenate(calibrated_batches, axis=0).reshape(-1),
+                    )
 
-                with torch.no_grad():
-                    for inputs, _ in test_loader:
-                        outputs = model(inputs, edge_index)
+                raw_val_flat, calibrated_val_flat = collect_probabilities(val_loader)
+                raw_probs_flat, probs_flat = collect_probabilities(test_loader)
+                y_val_flat = np.asarray(st.session_state.y_val).reshape(-1).astype(int)
+                y_test_flat = np.asarray(st.session_state.y_test).reshape(-1).astype(int)
 
-                        # Isolate Raw Output for physical thresholding
-                        eps = 1e-7
-                        out_clamped = torch.clamp(outputs, eps, 1.0 - eps)
-                        raw_probs_list.append(out_clamped.numpy())
+                def select_validation_threshold(y_true, probabilities, beta=2.0):
+                    """Maximize validation F-beta; break ties by precision, then threshold."""
+                    from sklearn.metrics import precision_score, recall_score, fbeta_score
+                    y_true = np.asarray(y_true).astype(int).reshape(-1)
+                    probabilities = np.asarray(probabilities).reshape(-1)
+                    if len(y_true) != len(probabilities):
+                        raise ValueError(
+                            f"Validation labels/probabilities mismatch: {len(y_true)} vs {len(probabilities)}."
+                        )
+                    if len(np.unique(y_true)) < 2:
+                        raise ValueError(
+                            "Validation threshold tuning requires both Safe and Failure labels. "
+                            "Review the storm-level partition before evaluating."
+                        )
+                    candidates = np.unique(np.concatenate(([0.0, 0.5, 1.0], probabilities)))
+                    best = None
+                    for threshold in candidates:
+                        pred = (probabilities >= threshold).astype(int)
+                        precision = precision_score(y_true, pred, zero_division=0)
+                        recall = recall_score(y_true, pred, zero_division=0)
+                        f_beta = fbeta_score(y_true, pred, beta=beta, zero_division=0)
+                        candidate = (f_beta, precision, float(threshold), recall)
+                        if best is None or candidate[:3] > best[:3]:
+                            best = candidate
+                    return best[2], {"F2": best[0], "Precision": best[1], "Recall": best[3]}
 
-                        # Apply Temperature Scaling from Tab 3 (if exists, else optimal_T=1.0)
-                        test_logits = torch.log(out_clamped / (1.0 - out_clamped))
-                        scaled_probs = torch.sigmoid(test_logits / optimal_T)
-                        test_probs_list.append(scaled_probs.numpy())
+                raw_threshold, raw_val_scores = select_validation_threshold(y_val_flat, raw_val_flat)
+                calibrated_threshold, calibrated_val_scores = select_validation_threshold(
+                    y_val_flat, calibrated_val_flat
+                )
+                st.session_state.raw_decision_threshold = float(raw_threshold)
+                st.session_state.calibrated_decision_threshold = float(calibrated_threshold)
 
-                # Flatten arrays because grid snapshots are shape (Snapshots, 33 Nodes)
-                probs_flat = np.concatenate(test_probs_list, axis=0).flatten()
-                raw_probs_flat = np.concatenate(raw_probs_list, axis=0).flatten()
-                y_test_flat = st.session_state.y_test.flatten()
-
-                # Convert calibrated probabilities into binary class predictions.
-                # probs_flat contains the temperature-scaled probabilities.
-                y_calibrated = (probs_flat >= 0.5).astype(int)
-
-                # Save predictions for the Phase 5 evaluation section.
+                # Apply the validation-selected thresholds to the untouched test probabilities.
+                y_raw = (raw_probs_flat >= raw_threshold).astype(int)
+                y_calibrated = (probs_flat >= calibrated_threshold).astype(int)
+                st.session_state.y_pred_raw = y_raw
                 st.session_state.y_pred_calibrated = y_calibrated
+
+                st.markdown("#### Validation-Only Decision Threshold Selection")
+                st.caption(
+                    "Thresholds maximize validation F2 (recall-weighted), with precision and then threshold "
+                    "used to break ties. Test labels are not used for threshold selection."
+                )
+                st.dataframe(pd.DataFrame([
+                    {"Probability stream": "Raw", "Selected threshold": raw_threshold, **raw_val_scores},
+                    {"Probability stream": "Temperature-scaled", "Selected threshold": calibrated_threshold, **calibrated_val_scores},
+                ]), use_container_width=True, hide_index=True)
                 
                 # Apply QCP Sets
                 q_hat = st.session_state.q_hat
@@ -1628,7 +1674,8 @@ with tab5:
                 # Save to Session State
                 st.session_state.final_results = pd.DataFrame(results)
                 # Fix: Assess raw predictions using raw_probs_flat to avoid scaled distortion
-                st.session_state.y_pred_raw = (raw_probs_flat >= 0.5).astype(int)
+                # Keep the validation-selected raw threshold; do not revert to a fixed 0.5.
+                st.session_state.y_pred_raw = (raw_probs_flat >= st.session_state.raw_decision_threshold).astype(int)
 
                 # For safety systems: If it's uncertain, we flag it as a 1 (Failure expected) to trigger alarms
                 st.session_state.y_pred_qcp = [1 if "Failure" in s else 0 for s in prediction_sets]
@@ -1680,7 +1727,7 @@ with tab5:
                 "Accuracy": m_calibrated["Acc"],
                 "Test samples": int(len(y_test)),
                 "Ground-truth failures": int(np.sum(np.asarray(y_test).reshape(-1) == 1)),
-                "Threshold": 0.5,
+                "Threshold": float(st.session_state.get("calibrated_decision_threshold", 0.5)),
             }
             st.session_state.architecture_benchmark = architecture_benchmark
 
