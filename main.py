@@ -747,7 +747,16 @@ with tab3:
                 ["Manual Configuration", "Run New Bayesian Search (Optuna)", "Use Cached Optimization"]
             )
 
-            st.markdown("#### Step 2: Quantum Backend")
+            st.markdown("#### Step 2: Model Architecture")
+            model_architecture = st.selectbox(
+                "Predictive architecture",
+                ["QSTGNN (expectation branch A)", "Hybrid QKN (A+B) + QSTGNN"],
+                index=1,
+                help="Hybrid mode fuses QKN expectation values with fidelity similarities to training-only quantum landmarks before graph-temporal learning."
+            )
+            st.session_state.model_architecture = model_architecture
+
+            st.markdown("#### Step 3: Quantum Backend")
             qkn_backend = st.selectbox(
                 "QKN Implementation Backend:",
                 ["pennylane", "cudaq"],
@@ -874,14 +883,35 @@ with tab3:
                     c_conv, c_gat, c_lstm, c_lr, c_drop = 16, 2, 32, 0.005, 0.3
 
             # --- TRAINING BLOCK ---
-            telemetry_status.info(" Extracting full dataset through Quantum Kernel Network...")
+            telemetry_status.info(" Extracting quantum representations...")
 
             qkn = create_qkn(st.session_state.get("qkn_backend", "pennylane"), n_qubits=q_qubits, layers=q_layers, entangling_type=q_entangle)
-            X_train_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_train)
-            X_cal_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_cal)
+            hybrid_mode = st.session_state.get("model_architecture", "Hybrid QKN (A+B) + QSTGNN") == "Hybrid QKN (A+B) + QSTGNN"
+            if hybrid_mode:
+                from src.hybrid_qstgnn import HybridQSTGNNFeatureEncoder
+                encoder = HybridQSTGNNFeatureEncoder(
+                    n_qubits=int(q_qubits),
+                    n_landmarks=8,
+                    random_state=42
+                ).fit(st.session_state.X_seq_train)
+                X_train_q = encoder.transform(st.session_state.X_seq_train, qkn)
+                X_cal_q = encoder.transform(st.session_state.X_seq_cal, qkn)
+                os.makedirs("data/processed", exist_ok=True)
+                torch.save(encoder.state_dict(), "data/processed/hybrid_qstgnn_encoder.pt")
+                st.session_state.hybrid_encoder_state = encoder.state_dict()
+                model_in_channels = encoder.output_channels
+                st.session_state.hybrid_feature_channels = model_in_channels
+                telemetry_status.info(
+                    f" Hybrid A+B fusion complete: {q_qubits} expectation channels + "
+                    f"{len(encoder.landmarks_)} train-only fidelity channels = {model_in_channels} QSTGNN input channels."
+                )
+            else:
+                X_train_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_train)
+                X_cal_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_cal)
+                model_in_channels = int(q_qubits)
 
-            # Save Quantum Embeddings for Visualization
-            st.session_state.X_train_q_numpy = X_train_q.detach().numpy()
+            # Save expectation/fused embeddings for visualization and audit.
+            st.session_state.X_train_q_numpy = X_train_q.detach().cpu().numpy()
 
             # Apply label smoothing to prevent 0.000 logit saturation loss
             y_train_smooth = np.clip(st.session_state.y_train, 0.05, 0.95)
@@ -899,7 +929,7 @@ with tab3:
 
             telemetry_status.info(" Initializing PyTorch Graph and Beginning Training...")
 
-            model = QuantumSpatiotemporalGNN(in_channels=q_qubits, seq_len=dynamic_seq_len, conv_out=c_conv,
+            model = QuantumSpatiotemporalGNN(in_channels=model_in_channels, seq_len=dynamic_seq_len, conv_out=c_conv,
                                              gat_heads=c_gat, lstm_hidden=c_lstm, dropout=c_drop)
 
             optimizer = optim.Adam(model.parameters(), lr=c_lr, weight_decay=1e-3)
@@ -975,6 +1005,8 @@ with tab3:
             st.session_state.final_model_config = {
                 'qkn_backend': st.session_state.get('qkn_backend', 'pennylane'),
                 'q_qubits': q_qubits, 'q_layers': q_layers, 'q_entangle': q_entangle,
+                'architecture': 'hybrid_qkn_ab_qstgnn' if hybrid_mode else 'qstgnn_expectation_a',
+                'model_in_channels': int(model_in_channels),
                 'c_conv': c_conv, 'c_gat': c_gat, 'c_lstm': c_lstm, 'c_drop': c_drop
             }
             st.session_state.model_trained = True
@@ -1140,11 +1172,23 @@ with tab5:
                 # Rebuild QKN
                 qkn = create_qkn(st.session_state.get("qkn_backend", "pennylane"), n_qubits=config['q_qubits'], layers=config['q_layers'],
                                            entangling_type=config['q_entangle'])
-                X_test_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_test)
+                if config.get('architecture') == 'hybrid_qkn_ab_qstgnn':
+                    from src.hybrid_qstgnn import HybridQSTGNNFeatureEncoder
+                    encoder_state = torch.load(
+                        "data/processed/hybrid_qstgnn_encoder.pt",
+                        map_location="cpu",
+                        weights_only=True
+                    )
+                    encoder = HybridQSTGNNFeatureEncoder.from_state_dict(encoder_state)
+                    X_test_q = encoder.transform(st.session_state.X_seq_test, qkn)
+                    model_in_channels = int(config.get('model_in_channels', encoder.output_channels))
+                else:
+                    X_test_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_test)
+                    model_in_channels = int(config.get('model_in_channels', config['q_qubits']))
 
-                # Rebuild GNN
+                # Rebuild QSTGNN with the same fused channel dimension used during training.
                 model = QuantumSpatiotemporalGNN(
-                    in_channels=config['q_qubits'], seq_len=4, conv_out=config['c_conv'],
+                    in_channels=model_in_channels, seq_len=4, conv_out=config['c_conv'],
                     gat_heads=config['c_gat'], lstm_hidden=config['c_lstm'], dropout=config['c_drop']
                 )
                 model.load_state_dict(torch.load("data/processed/hybrid_dl_weights.pt", weights_only=True))
