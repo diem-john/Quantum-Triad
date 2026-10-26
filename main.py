@@ -1382,6 +1382,11 @@ with tab5:
             st.session_state.q_hat = np.quantile(scores, 0.90)  # Default alpha = 0.10
 
         st.markdown("###  Phase 5: Out-of-Sample Inference Testing")
+        st.warning(
+            "Use the untouched held-out test partition for primary reported metrics. Do not remove Safe "
+            "nodes from it to improve class balance. If a balanced diagnostic is added, report it separately "
+            "as a secondary evaluation and retain the original test results."
+        )
         st.write(
             f"Evaluating model reliability on unseen test data using the established conformal threshold $q_{{\hat{{h}}}}$ = **{st.session_state.q_hat:.4f}**.")
 
