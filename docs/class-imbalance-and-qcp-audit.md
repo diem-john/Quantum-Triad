@@ -5,8 +5,9 @@
 - `Failure_Label` is generated as a synthetic vulnerability proxy using `label = 1 if total_risk >= 0.45 else 0`, where `total_risk` combines the vulnerability curve, coastal exposure, and accumulated fatigue.
 - Snapshot extraction previously injected labels into four coastal buses if no failures were naturally generated. This could manufacture targets and obscure a label-generation/threshold problem. The fallback has been removed: when no positive labels are produced, the app stops and asks the user to inspect the risk rule and selected storms.
 - Snapshot selection previously sampled randomly even after identifying failure-containing snapshots. The updated selector prioritizes failure-containing snapshots and then reserves a snapshot per storm, subject to the snapshot budget.
-- Event-level partitions remain grouped by `storm_id` to prevent snapshots from the same storm leaking across partitions.
-- A separate validation partition is now created; calibration is reserved for QCP calibration rather than model selection.
+- Event-level partitions remain grouped by `storm_id` to prevent snapshots from the same storm leaking across partitions. The latest splitter searches whole-storm allocations against target proportions of 60% train, 15% validation, 10% calibration, and 15% test while balancing snapshot counts and positive-node burden. It requires at least one failure-containing storm per partition and stops rather than fabricating labels when this is infeasible.
+- A separate validation partition is used for model selection; calibration is reserved for QCP calibration rather than model selection.
+- The QSTGNN training loss now weights positive-class node errors using the class ratio calculated from the training partition only. No validation, calibration, or test examples are resampled.
 - The app exports and displays pre-selection label counts and counts for the full selected dataset, training, validation, calibration, and testing. Counts include Safe, Failure, percentages, total samples, and unexpected labels.
 - Phase 5 reports empirical conformal set coverage separately from the ambiguous-set rate and fail-safe binary metrics.
 
@@ -14,7 +15,7 @@
 
 The QSTGNN input is a graph snapshot with shape `(snapshots, 33 buses, time steps, channels)`, and its target is a multi-node label matrix `(snapshots, 33 buses)`. Standard `imblearn.SMOTE` expects independent tabular feature rows with one class label per row. Flattening graph snapshots and applying SMOTE naively would destroy graph/node semantics or create labels that do not correspond to the generated graph state.
 
-Therefore, standard SMOTE has **not** been applied blindly to the QSTGNN tensors in this change. Before applying SMOTE, the augmentation unit must be specified and validated—for example, a graph-aware node/window augmentation that preserves bus topology and assigns targets consistently. In the meantime, do not resample validation, calibration, or test data. A class-weighted node-level loss is a safer baseline for the current graph model and can be compared against a rigorously defined graph-aware SMOTE implementation.
+Therefore, standard SMOTE has **not** been applied to the QSTGNN graph tensors: doing so directly would break graph/node semantics. The current implementation uses a training-only positive-class weighted loss as the graph-preserving baseline. A graph-aware SMOTE method should be a separate experiment only after its augmentation unit, topology preservation, and label assignment are explicitly defined. Any future resampling must fit on training data only; validation, calibration, and test data must remain untouched.
 
 ## Split feasibility and interpretation
 
