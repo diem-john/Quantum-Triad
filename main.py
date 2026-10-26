@@ -55,7 +55,11 @@ def label_distribution_frame(label_sets):
 
 
 def stratified_storm_group_split(storm_ids, y_tensor, fractions=(0.60, 0.15, 0.10, 0.15), random_state=42, trials=12000):
-    """Assign whole storms to four partitions, balancing snapshot and positive-node counts."""
+    """Allocate whole storms using randomized multi-start assignment and pair-swap refinement.
+
+    The objective balances total snapshots, positive bus labels, and the number of
+    failure-containing storms against each partition's target. Storms are never split.
+    """
     storm_ids = np.asarray(storm_ids).astype(str)
     labels = np.asarray(y_tensor)
     names = ("train", "validation", "calibration", "test")
@@ -64,46 +68,106 @@ def stratified_storm_group_split(storm_ids, y_tensor, fractions=(0.60, 0.15, 0.1
     groups = np.unique(storm_ids)
     if len(groups) < len(names):
         raise ValueError(f"Need at least {len(names)} distinct storms; found {len(groups)}.")
-    stats = {g: np.array([int(np.sum(storm_ids == g)), int(np.sum(labels[storm_ids == g] == 1))], dtype=float) for g in groups}
-    positive_groups = [g for g in groups if stats[g][1] > 0]
+
+    stats = {}
+    for group in groups:
+        mask = storm_ids == group
+        positive_count = int(np.sum(labels[mask] == 1))
+        stats[group] = np.array([int(mask.sum()), positive_count, int(positive_count > 0)], dtype=float)
+    positive_groups = [g for g in groups if stats[g][2] > 0]
     if len(positive_groups) < len(names):
         raise ValueError(
             f"Only {len(positive_groups)} storms contain Failure labels, but four independent "
             "partitions are requested. Add genuine failure-containing storms or reduce partition "
             "count; do not synthesize labels or split storms across sets."
         )
+
     total = np.sum(list(stats.values()), axis=0)
     target = fractions[:, None] * total
+    # Class-positive storm count is a feasibility guard and part of the objective.
+    weights = np.array([1.0, 1.5, 0.75], dtype=float)
+    denom = np.maximum(target, 1.0)
+
+    def score_assignment(assignment):
+        current = np.zeros_like(target)
+        for p, partition in enumerate(assignment):
+            for group in partition:
+                current[p] += stats[group]
+        relative_error = (current - target) / denom
+        score = float(np.sum(relative_error ** 2 * weights))
+        # Penalize partitions without positive storms heavily; those partitions cannot
+        # provide meaningful failure-class metrics.
+        for partition in assignment:
+            if not any(stats[g][2] > 0 for g in partition):
+                score += 1e6
+        if any(len(partition) == 0 for partition in assignment):
+            score += 1e6
+        return score, current
+
     rng = np.random.default_rng(random_state)
-    best, best_score = None, float("inf")
-    for _ in range(trials):
-        order = list(groups)
+    best_assignment, best_score = None, float("inf")
+    group_array = np.asarray(groups, dtype=object)
+
+    for _ in range(max(1, int(trials))):
+        order = group_array.copy()
         rng.shuffle(order)
-        order.sort(key=lambda g: (stats[g][1] > 0, stats[g][1], stats[g][0]), reverse=True)
-        assigned = [[] for _ in names]
-        current = np.zeros((len(names), 2), dtype=float)
+        # Vary ordering while still placing large/positive storms early enough to avoid
+        # greedy starvation of the small calibration and test partitions.
+        priority_noise = rng.random(len(order))
+        order = sorted(order, key=lambda g: (
+            stats[g][2], stats[g][1], stats[g][0], priority_noise[list(group_array).index(g)]
+        ), reverse=True)
+
+        assignment = [[] for _ in names]
+        # Seed each partition with a different positive-containing storm.
+        seeded = rng.choice(np.asarray(positive_groups, dtype=object), size=len(names), replace=False)
+        for p, group in enumerate(seeded):
+            assignment[p].append(group)
+        seeded_set = set(seeded.tolist())
         for group in order:
-            gstat = stats[group]
-            scores = []
+            if group in seeded_set:
+                continue
+            # Test every destination against the global score, not only local target
+            # error, so each decision considers all partitions simultaneously.
+            candidates = []
             for p in range(len(names)):
-                proposed = current.copy()
-                proposed[p] += gstat
-                score = np.sum(((proposed - target) / np.maximum(target, 1.0)) ** 2)
-                scores.append(score + rng.random() * 0.015)
-            p = int(np.argmin(scores))
-            assigned[p].append(group)
-            current[p] += gstat
-        if any(not part for part in assigned):
-            continue
-        if any(not any(stats[g][1] > 0 for g in part) for part in assigned):
-            continue
-        score = np.sum(((current - target) / np.maximum(target, 1.0)) ** 2)
-        if score < best_score:
-            best, best_score = assigned, score
-    if best is None:
+                proposal = [part.copy() for part in assignment]
+                proposal[p].append(group)
+                candidates.append((score_assignment(proposal)[0] + rng.random() * 1e-8, p))
+            assignment[min(candidates)[1]].append(group)
+
+        current_score, _ = score_assignment(assignment)
+        # Pair-swap local search repairs greedy allocations while preserving whole storms.
+        improved = True
+        passes = 0
+        while improved and passes < 4:
+            improved = False
+            passes += 1
+            for p in range(len(names)):
+                for q in range(p + 1, len(names)):
+                    for gp in list(assignment[p]):
+                        for gq in list(assignment[q]):
+                            proposal = [part.copy() for part in assignment]
+                            proposal[p].remove(gp)
+                            proposal[q].remove(gq)
+                            proposal[p].append(gq)
+                            proposal[q].append(gp)
+                            proposal_score, _ = score_assignment(proposal)
+                            if proposal_score + 1e-12 < current_score:
+                                assignment = proposal
+                                current_score = proposal_score
+                                improved = True
+            # continue until no pair swap improves the global score or pass cap reached
+
+        final_score, _ = score_assignment(assignment)
+        if final_score < best_score:
+            best_assignment, best_score = [part.copy() for part in assignment], final_score
+
+    if best_assignment is None or any(not any(stats[g][2] > 0 for g in part) for part in best_assignment):
         raise ValueError("Could not allocate failure-containing storms to all four partitions. Add more independent storms.")
-    indices = {name: np.flatnonzero(np.isin(storm_ids, part)) for name, part in zip(names, best)}
-    groups_by_partition = {name: sorted(part) for name, part in zip(names, best)}
+
+    indices = {name: np.flatnonzero(np.isin(storm_ids, part)) for name, part in zip(names, best_assignment)}
+    groups_by_partition = {name: sorted(map(str, part)) for name, part in zip(names, best_assignment)}
     return indices, groups_by_partition
 
 
