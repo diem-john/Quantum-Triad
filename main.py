@@ -1494,6 +1494,51 @@ with tab5:
             m_calibrated = get_metrics(y_test, y_calibrated)
             m_qcp = get_metrics(y_test, y_qcp)
 
+            # Retain per-architecture test metrics in this Streamlit session so A-only
+            # and A+B can be compared after each is trained/evaluated on the same split.
+            active_config = st.session_state.get("final_model_config", {})
+            active_architecture = active_config.get("architecture", "unknown")
+            architecture_benchmark = st.session_state.get("architecture_benchmark", {})
+            architecture_benchmark[active_architecture] = {
+                "Architecture": active_architecture,
+                "Recall": m_calibrated["Rec"],
+                "Precision": m_calibrated["Pre"],
+                "F1": m_calibrated["F1"],
+                "Accuracy": m_calibrated["Acc"],
+                "Test samples": int(len(y_test)),
+                "Ground-truth failures": int(np.sum(np.asarray(y_test).reshape(-1) == 1)),
+                "Threshold": 0.5,
+            }
+            st.session_state.architecture_benchmark = architecture_benchmark
+
+            st.markdown("#### A-only vs A+B Architecture Benchmark")
+            st.caption(
+                "Compare calibrated binary predictions on the same held-out storm split. "
+                "Prioritize Recall, then Precision, F1, and Accuracy. Re-run both architectures "
+                "without changing the extracted dataset or split."
+            )
+            benchmark_df = pd.DataFrame(architecture_benchmark.values())
+            if not benchmark_df.empty:
+                benchmark_df = benchmark_df[
+                    ["Architecture", "Recall", "Precision", "F1", "Accuracy",
+                     "Test samples", "Ground-truth failures", "Threshold"]
+                ].sort_values("Recall", ascending=False)
+                st.dataframe(
+                    benchmark_df.style.format({
+                        "Recall": "{:.2%}", "Precision": "{:.2%}",
+                        "F1": "{:.2%}", "Accuracy": "{:.2%}",
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.download_button(
+                    "Download A-only vs A+B Benchmark (CSV)",
+                    data=benchmark_df.to_csv(index=False),
+                    file_name="architecture_benchmark.csv",
+                    mime="text/csv",
+                    key="architecture_benchmark_download",
+                )
+
             # --- PREDICTION CONFIDENCE ---
             st.markdown("####  Conformal Set Efficiency")
 
