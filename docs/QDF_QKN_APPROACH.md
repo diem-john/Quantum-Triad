@@ -80,3 +80,19 @@ All scalers are fitted on the training partition only. The runner exports JSON a
 **Scope caveat:** this is a matched comparison of quantum feature representations, not a complete evaluation of the full Approach A spatiotemporal GNN. The checked-in dataset is row-wise and lacks time-window sequences, node identifiers, and graph edge data needed to instantiate the full GNN without inventing structure. Do not describe the RBF-SVC downstream classifier as the full Approach A architecture. To compare full A versus B, first prepare event-aware sequence tensors and the corresponding graph topology, then evaluate the GNN and kernel model on identical event-level partitions.
 
 The default sample-level split remains exploratory because the checked-in dataset has no storm/event ID. Do not use it to claim unseen-storm generalization.
+
+
+## Hybrid QKN (A+B): fused quantum representation
+
+The matched benchmark now includes **Hybrid QKN (A+B)** as a fourth model path. It fuses both quantum representations before the downstream classifier:
+
+1. **A branch — expectation-value representation:** apply AngleEmbedding + StronglyEntanglingLayers and measure Pauli-Z expectations.
+2. **B branch — fidelity representation:** compute each sample's quantum fidelity similarity to each training sample.
+3. **Fusion:** concatenate the A expectation vector with the B similarity-to-training vector for each sample.
+4. **Classifier:** standardize the fused vector using statistics fitted on training data only, then train an RBF-SVC. The test representation uses similarities to training samples only; held-out samples are never used as reference points.
+
+The comparison now reports A, B, Hybrid A+B, and classical RBF-SVC metrics on the same split. For storm-aware evaluation, all metrics include pooled and per-storm results. Recall remains the primary metric to inspect, followed by precision and then accuracy.
+
+**Architecture scope:** this is a concrete feature-level hybrid for the current row-wise, event-aware CSV benchmark. It combines A's expectation values and B's fidelity similarities, but it is **not yet a fusion into the full** `QuantumSpatiotemporalGNN` (temporal CNN + GAT + BiLSTM + attention). The row-wise CSV does not carry the full sequence tensor and graph structure required to train and evaluate that end-to-end hybrid. Do not describe this benchmark as the full hybrid GNN or claim predictive superiority before running and validating the experiment.
+
+The fidelity branch produces an n_train-length similarity vector per sample, so the fused dimensionality grows with the number of training samples. The dense kernel computation is quadratic in training-set size; keep the sample budget modest for simulator-based exploration.
