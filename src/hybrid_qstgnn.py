@@ -24,12 +24,15 @@ class HybridQSTGNNFeatureEncoder:
     n_qubits: int = 3
     n_landmarks: int = 8
     random_state: int = 42
+    b_weight: float = 0.25
 
     def __post_init__(self):
         if self.n_qubits < 2:
             raise ValueError("n_qubits must be >= 2")
         if self.n_landmarks < 1:
             raise ValueError("n_landmarks must be >= 1")
+        if not 0.0 <= float(self.b_weight) <= 1.0:
+            raise ValueError("b_weight must be between 0 and 1.")
         self.kernel = QuantumFidelityKernel(n_qubits=self.n_qubits)
         self.landmarks_: np.ndarray | None = None
 
@@ -76,6 +79,9 @@ class HybridQSTGNNFeatureEncoder:
         B = similarities.reshape(n_samples, n_nodes, n_steps, len(self.landmarks_))
         B = np.transpose(B, (0, 1, 3, 2)).copy()
         B = torch.as_tensor(B, dtype=torch.float32)
+        # A is the primary representation. Scale B before concatenation so the
+        # fidelity branch contributes a smaller signal to the downstream GNN.
+        B = B * float(self.b_weight)
 
         # Feature fusion occurs before temporal and graph message passing.
         return torch.cat([A, B], dim=2).contiguous()
@@ -93,6 +99,7 @@ class HybridQSTGNNFeatureEncoder:
             "n_qubits": int(self.n_qubits),
             "n_landmarks": int(len(self.landmarks_)),
             "random_state": int(self.random_state),
+            "b_weight": float(self.b_weight),
             "landmarks": self.landmarks_.tolist(),
         }
 
@@ -102,6 +109,7 @@ class HybridQSTGNNFeatureEncoder:
             n_qubits=int(state["n_qubits"]),
             n_landmarks=int(state["n_landmarks"]),
             random_state=int(state.get("random_state", 42)),
+            b_weight=float(state.get("b_weight", 0.25)),
         )
         encoder.landmarks_ = np.asarray(state["landmarks"], dtype=np.float64)
         if encoder.landmarks_.ndim != 2 or encoder.landmarks_.shape[1] < 1:
