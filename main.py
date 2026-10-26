@@ -107,21 +107,6 @@ def stratified_storm_group_split(storm_ids, y_tensor, fractions=(0.60, 0.15, 0.1
     return indices, groups_by_partition
 
 
-def smote_training_node_features_only(X_train, y_train, random_state=42):
-    """Training-only SMOTE helper for nodewise baselines, not for reconstructing graph tensors."""
-    from imblearn.over_sampling import SMOTE
-    X = np.asarray(X_train)
-    y = np.asarray(y_train).reshape(-1).astype(int)
-    node_features = X.reshape(-1, X.shape[-2] * X.shape[-1])
-    if len(np.unique(y)) < 2:
-        raise ValueError("Training labels contain only one class; SMOTE requires both classes.")
-    _, counts = np.unique(y, return_counts=True)
-    if int(counts.min()) < 2:
-        raise ValueError("SMOTE needs at least two genuine training examples in the minority class.")
-    sampler = SMOTE(random_state=random_state, k_neighbors=min(5, int(counts.min()) - 1))
-    X_resampled, y_resampled = sampler.fit_resample(node_features, y)
-    return X_resampled, y_resampled
-
 def render_label_distribution_audit(label_sets, title="Label Distribution Audit"):
     """Display and persist class counts for the supplied partitions."""
     report = label_distribution_frame(label_sets)
@@ -1137,7 +1122,25 @@ with tab3:
 
             optimizer = optim.Adam(model.parameters(), lr=c_lr, weight_decay=1e-3)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
-            criterion = nn.BCELoss()
+            # Graph-preserving imbalance handling: weight genuine positive bus labels in the
+            # training loss. Ordinary SMOTE creates independent rows and cannot preserve the
+            # 33-node graph topology or node-to-label alignment of this QSTGNN.
+            train_label_values = np.asarray(st.session_state.y_train).reshape(-1)
+            n_positive = int(np.sum(train_label_values == 1))
+            n_negative = int(np.sum(train_label_values == 0))
+            if n_positive == 0 or n_negative == 0:
+                st.error(
+                    "Training partition must contain both Safe and Failure labels. "
+                    "Revisit the storm split or collect more labeled storm events."
+                )
+                st.stop()
+            positive_weight = float(n_negative / max(n_positive, 1))
+            criterion = nn.BCELoss(reduction="none")
+            st.info(
+                f"Training-only imbalance correction: positive-class loss weight = {positive_weight:.3f} "
+                f"(Safe nodes: {n_negative:,}; Failure nodes: {n_positive:,}). "
+                "Validation, calibration, and test labels are not resampled."
+            )
 
             loss_history = pd.DataFrame(columns=['Train Loss', 'Val Loss'])
             acc_history = pd.DataFrame(columns=['Val Accuracy'])
@@ -1154,7 +1157,14 @@ with tab3:
                     # Clamp outputs to prevent math errors
                     outputs_clamped = torch.clamp(outputs, 1e-7, 1.0 - 1e-7)
 
-                    loss = criterion(outputs_clamped, targets.view_as(outputs_clamped))
+                    target_values = targets.view_as(outputs_clamped)
+                    element_losses = criterion(outputs_clamped, target_values)
+                    element_weights = torch.where(
+                        target_values >= 0.5,
+                        torch.as_tensor(positive_weight, dtype=element_losses.dtype, device=element_losses.device),
+                        torch.ones_like(element_losses)
+                    )
+                    loss = (element_losses * element_weights).mean()
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
