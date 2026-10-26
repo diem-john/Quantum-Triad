@@ -32,6 +32,44 @@ from src.qkn import QuantumSpatiotemporalGNN
 from src.qkn_backend import create_qkn
 from src.qcp import QuantumConformalPredictor
 
+
+def label_distribution_frame(label_sets):
+    """Return auditable binary class counts without modifying the labels."""
+    rows = []
+    for name, labels in label_sets.items():
+        values = np.asarray(labels).reshape(-1)
+        total = int(values.size)
+        safe = int(np.sum(values == 0))
+        failure = int(np.sum(values == 1))
+        rows.append({
+            "Dataset": name,
+            "Total": total,
+            "Safe (0)": safe,
+            "Failure (1)": failure,
+            "Safe (%)": round(100.0 * safe / total, 2) if total else 0.0,
+            "Failure (%)": round(100.0 * failure / total, 2) if total else 0.0,
+            "Other labels": int(np.sum(~np.isin(values, [0, 1]))),
+        })
+    return pd.DataFrame(rows)
+
+
+def render_label_distribution_audit(label_sets, title="Label Distribution Audit"):
+    """Display and persist class counts for the supplied partitions."""
+    report = label_distribution_frame(label_sets)
+    st.markdown(f"#### {title}")
+    st.dataframe(report, use_container_width=True, hide_index=True)
+    os.makedirs("data/processed", exist_ok=True)
+    report.to_csv("data/processed/label_distribution_audit.csv", index=False)
+    st.download_button(
+        "Download Label Distribution Audit (CSV)",
+        data=report.to_csv(index=False),
+        file_name="label_distribution_audit.csv",
+        mime="text/csv",
+        key=f"label_distribution_download_{title.lower().replace(' ', '_')}",
+    )
+    return report
+
+
 # --- HELPER: CSV EXPORT ---
 @st.cache_data
 def convert_df_to_csv(df):
@@ -271,31 +309,49 @@ with tab1:
                     df_stress = df_snapshots[df_snapshots['has_stress'] == True]
                     df_safe = df_snapshots[df_snapshots['has_stress'] == False]
 
-                    # Ensure we capture grid failures
+                    # Do not fabricate labels if the risk rule produces no failures.
+                    # Artificially forcing labels here would contaminate evaluation and hide
+                    # a threshold/data-generation problem.
                     if df_stress.empty:
-                        st.warning("Typhoons were too weak. Inducing synthetic coastal stress on final snapshot.")
-                        # Induce synthetic failure on coastal buses (18, 22, 25, 33) in the last snapshot
-                        synth_idx = df_snapshots.index[-1]
-                        df_snapshots.at[synth_idx, 'labels'][[17, 21, 24, 32]] = 1
-                        df_stress = df_snapshots.iloc[[synth_idx]]
-                        df_safe = df_snapshots.drop(index=synth_idx)
+                        st.error(
+                            "The current Failure_Label rule produced no failure snapshots. "
+                            "Review vulnerability_curve(), the total_risk threshold (0.45), "
+                            "wind/risk scaling, and the selected storms. No labels were fabricated."
+                        )
+                        st.dataframe(
+                            label_distribution_frame({"All extracted bus labels": np.concatenate(df_snapshots["labels"].to_list())}),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                        st.stop()
 
-                    # Reserve a snapshot from each storm before filling the remaining budget.
+                    # Preserve every failure-containing snapshot when the budget permits.
+                    # Then reserve one snapshot per storm, and fill the remaining budget.
                     available_storms = df_snapshots['storm_id'].dropna().astype(str).unique().tolist()
                     budget = min(int(target_snapshots), len(df_snapshots))
                     rng = np.random.default_rng(42)
+                    stress_indices = df_snapshots.index[df_snapshots['has_stress'] == True].to_list()
                     mandatory_indices = []
                     for storm_id in available_storms:
                         storm_rows = df_snapshots.index[df_snapshots['storm_id'].astype(str) == storm_id].to_numpy()
                         if len(storm_rows):
                             mandatory_indices.append(int(rng.choice(storm_rows)))
-                    if len(mandatory_indices) > budget:
-                        st.warning('Snapshot budget is smaller than the number of storms; increase it to include every storm.')
-                        mandatory_indices = mandatory_indices[:budget]
-                    remaining_budget = max(0, budget - len(mandatory_indices))
-                    remaining_indices = df_snapshots.index.difference(mandatory_indices).to_numpy()
-                    extra_indices = rng.choice(remaining_indices, size=min(remaining_budget, len(remaining_indices)), replace=False).tolist() if remaining_budget else []
-                    selected_indices = list(dict.fromkeys(mandatory_indices + extra_indices))
+                    # Prioritize positive snapshots so random selection cannot silently omit all failures.
+                    prioritized = list(dict.fromkeys(stress_indices + mandatory_indices))
+                    if len(prioritized) > budget:
+                        st.warning(
+                            "The snapshot budget is smaller than the number of failure-containing/mandatory snapshots. "
+                            "Some storms may be omitted; increase the snapshot budget for a reliable split."
+                        )
+                        prioritized = prioritized[:budget]
+                    remaining_budget = max(0, budget - len(prioritized))
+                    remaining_indices = df_snapshots.index.difference(prioritized).to_numpy()
+                    extra_indices = rng.choice(
+                        remaining_indices,
+                        size=min(remaining_budget, len(remaining_indices)),
+                        replace=False
+                    ).tolist() if remaining_budget else []
+                    selected_indices = list(dict.fromkeys(prioritized + extra_indices))
                     final_snapshots = df_snapshots.loc[selected_indices].sample(frac=1, random_state=42).reset_index(drop=True)
                     if final_snapshots['storm_id'].nunique() < 3:
                         st.warning('Fewer than three storms are represented in the selected snapshots. Increase the snapshot budget or process more typhoons.')
@@ -544,7 +600,30 @@ with tab1:
                 st.session_state.train_storm_ids = sorted(train_storms)
                 st.session_state.cal_storm_ids = sorted(cal_storms)
                 st.session_state.test_storm_ids = sorted(test_storms)
-                st.success(f"Event-level split: {len(train_storms)} train storms, {len(cal_storms)} calibration storms, {len(test_storms)} held-out test storms.")
+
+                # Audit the complete label pool and every current event-level partition.
+                # Current pipeline has train/calibration/test only; calibration is also used
+                # for epoch selection below, so it is not an independent validation set yet.
+                full_labels = Y_tensor.reshape(-1)
+                train_labels = Y_tensor[train_idx].reshape(-1)
+                cal_labels = Y_tensor[cal_idx].reshape(-1)
+                test_labels = Y_tensor[test_idx].reshape(-1)
+                distribution_report = render_label_distribution_audit({
+                    "Full dataset before split": full_labels,
+                    "Training": train_labels,
+                    "Calibration (also used for validation currently)": cal_labels,
+                    "Held-out testing": test_labels,
+                }, title="Full and Partition Label Distributions")
+                st.session_state.label_distribution_report = distribution_report.to_dict("records")
+
+                st.warning(
+                    "Audit note: calibration data is currently also used for validation/model selection. "
+                    "For statistically clean QCP evaluation, create a separate validation split before finalizing results."
+                )
+                st.success(
+                    f"Event-level split: {len(train_storms)} train storms, "
+                    f"{len(cal_storms)} calibration storms, {len(test_storms)} held-out test storms."
+                )
 
                 st.session_state.feature_cols = selected_features
                 st.session_state.data_loaded = True
