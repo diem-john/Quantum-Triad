@@ -272,15 +272,25 @@ with tab1:
                         df_stress = df_snapshots.iloc[[synth_idx]]
                         df_safe = df_snapshots.drop(index=synth_idx)
 
-                    k_stress = min(len(df_stress), target_snapshots // 2)
-                    k_safe = target_snapshots - k_stress
-
-                    selected_stress = df_stress.sample(n=k_stress, random_state=42)
-                    selected_safe = df_safe.sample(n=k_safe, random_state=42) if not df_safe.empty else pd.DataFrame()
-
-                    final_snapshots = pd.concat([selected_stress, selected_safe]).sample(frac=1,
-                                                                                         random_state=42).reset_index(
-                        drop=True)
+                    # Reserve a snapshot from each storm before filling the remaining budget.
+                    available_storms = df_snapshots['storm_id'].dropna().astype(str).unique().tolist()
+                    budget = min(int(target_snapshots), len(df_snapshots))
+                    rng = np.random.default_rng(42)
+                    mandatory_indices = []
+                    for storm_id in available_storms:
+                        storm_rows = df_snapshots.index[df_snapshots['storm_id'].astype(str) == storm_id].to_numpy()
+                        if len(storm_rows):
+                            mandatory_indices.append(int(rng.choice(storm_rows)))
+                    if len(mandatory_indices) > budget:
+                        st.warning('Snapshot budget is smaller than the number of storms; increase it to include every storm.')
+                        mandatory_indices = mandatory_indices[:budget]
+                    remaining_budget = max(0, budget - len(mandatory_indices))
+                    remaining_indices = df_snapshots.index.difference(mandatory_indices).to_numpy()
+                    extra_indices = rng.choice(remaining_indices, size=min(remaining_budget, len(remaining_indices)), replace=False).tolist() if remaining_budget else []
+                    selected_indices = list(dict.fromkeys(mandatory_indices + extra_indices))
+                    final_snapshots = df_snapshots.loc[selected_indices].sample(frac=1, random_state=42).reset_index(drop=True)
+                    if final_snapshots['storm_id'].nunique() < 3:
+                        st.warning('Fewer than three storms are represented in the selected snapshots. Increase the snapshot budget or process more typhoons.')
 
                     # Store as numpy arrays.
                     # X_tensor shape: (Snapshots, 33 Nodes, 4 Timesteps, 4 Features)
