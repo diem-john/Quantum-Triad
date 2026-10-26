@@ -96,10 +96,26 @@ with tabs[1]:
             st.error("The target must be binary and encoded as 0/1.")
             st.stop()
         if max_samples and len(work) > max_samples:
-            from sklearn.model_selection import train_test_split
-            work, _ = train_test_split(work, train_size=int(max_samples), random_state=int(seed), stratify=work[label_col])
+            # Keep every row from a selected event; never downsample individual bus rows.
+            rng = np.random.RandomState(int(seed))
+            event_ids = work[group_col].drop_duplicates().to_numpy()
+            rng.shuffle(event_ids)
+            selected_events = []
+            selected_rows = 0
+            for event_id in event_ids:
+                event_rows = int((work[group_col] == event_id).sum())
+                if selected_rows and selected_rows + event_rows > int(max_samples):
+                    continue
+                selected_events.append(event_id)
+                selected_rows += event_rows
+                if selected_rows >= int(max_samples):
+                    break
+            work = work[work[group_col].isin(selected_events)].copy()
         if work[group_col].nunique() < 3:
-            st.error("The row budget left fewer than 3 events. Increase the row budget.")
+            st.error("The row budget left fewer than 3 complete events. Increase the row budget.")
+            st.stop()
+        if work[label_col].nunique() < 2:
+            st.error("The selected complete events do not contain both target classes. Increase the row budget or select different events.")
             st.stop()
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8", newline="") as tmp:
             temp_path = tmp.name
