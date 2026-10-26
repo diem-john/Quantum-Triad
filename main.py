@@ -54,7 +54,7 @@ def label_distribution_frame(label_sets):
 
 
 
-def stratified_storm_group_split(storm_ids, y_tensor, fractions=(0.60, 0.15, 0.10, 0.15), random_state=42, trials=12000):
+def stratified_storm_group_split(storm_ids, y_tensor, fractions=(0.60, 0.15, 0.10, 0.15), random_state=42, trials=500):
     """Allocate whole storms using randomized multi-start assignment and pair-swap refinement.
 
     The objective balances total snapshots, positive bus labels, and the number of
@@ -303,7 +303,7 @@ with tab1:
     with col2:
         st.info(
             "**Geospatial & Temporal Setup**\n\nThe 33-bus system is mapped to Chiayi. The extraction pipeline now builds full **Grid Snapshots** required for Graph Neural Network message passing.")
-        ids = int(st.slider("How Many Typhoons to Process:", 4, 10, 8, help="Use enough distinct storm events to support independent train, validation, calibration, and test partitions."))
+        ids = int(st.slider("How Many Typhoons to Process:", 4, 100, 80, help="Process more distinct storm events to support independent train, validation, calibration, and test partitions. The source dataset may contain fewer eligible events."))
         forecast_horizon = st.slider("Forecast Horizon (Lead-Time Steps):", 1, 6, 2)
         target_snapshots = st.slider("QPU Snapshot Budget:", 10, 100, 25,
                                      help="How many full grid-states to extract. 25 snapshots = 825 individual bus evaluations.")
