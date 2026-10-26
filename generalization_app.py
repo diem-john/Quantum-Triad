@@ -145,8 +145,26 @@ with tabs[1]:
         c3.metric("Held-out test rows", split["test_rows"])
         st.write("**Training event IDs:**", ", ".join(split["train_events"]))
         st.write("**Held-out event IDs:**", ", ".join(split["test_events"]))
-        metrics = pd.DataFrame([{"model": name, **values} for name, values in result["models"].items()])
+        metrics = pd.DataFrame([
+            {"model": name, **{key: value for key, value in values.items() if key != "per_storm_metrics"}}
+            for name, values in result["models"].items()
+        ])
+        st.subheader("Pooled held-out metrics")
         st.dataframe(metrics, use_container_width=True)
+        per_storm_rows = []
+        for model_name, values in result["models"].items():
+            for storm_id, storm_metrics in values.get("per_storm_metrics", {}).items():
+                per_storm_rows.append({"model": model_name, "storm_id": storm_id, **storm_metrics})
+        if per_storm_rows:
+            st.subheader("Metrics by held-out storm")
+            per_storm = pd.DataFrame(per_storm_rows)
+            st.dataframe(per_storm, use_container_width=True)
+            st.download_button(
+                "Download per-storm metrics CSV",
+                per_storm.to_csv(index=False),
+                file_name="qkn_per_storm_metrics.csv",
+                mime="text/csv",
+            )
         metric_cols = [c for c in ["accuracy", "precision", "recall", "f1"] if c in metrics.columns]
         if metric_cols:
             st.plotly_chart(px.bar(metrics, x="model", y=metric_cols, barmode="group", title="Performance on held-out typhoon events"), use_container_width=True)
