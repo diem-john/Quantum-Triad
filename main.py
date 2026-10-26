@@ -1523,9 +1523,10 @@ with tab7:
     st.markdown("### Unseen-Typhoon Generalization & QKN Benchmark")
     st.caption("Integrated evaluation workspace — no separate Streamlit process required.")
     st.markdown(
-        "Compare QKN-style expectation features, the quantum fidelity kernel, and a classical baseline "
-        "using a storm-level holdout. This benchmark complements the trained spatiotemporal GNN; it does "
-        "not claim to be the full GNN architecture."
+        "Compare Approach A, Approach B, the new feature-fused Hybrid QKN (A+B), and a classical baseline "
+        "using the same storm-level holdout. Hybrid A+B concatenates Pauli-Z expectation features with "
+        "fidelity similarities to training samples before classification. This is a feature-level hybrid, "
+        "not yet a fusion into the full spatiotemporal GNN."
     )
 
     import json
@@ -1683,7 +1684,7 @@ with tab7:
             st.warning("Select no more than eight features for this simulator-based benchmark.")
 
         if st.button(
-            "Run storm-level QKN benchmark",
+            "Run storm-level QKN A/B/Hybrid benchmark",
             type="primary",
             disabled=not can_run_eval,
             key="integrated_eval_run"
