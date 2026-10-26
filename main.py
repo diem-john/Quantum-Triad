@@ -1442,6 +1442,16 @@ with tab5:
                 total_samples = len(results)
                 certain_count = total_samples - ambiguous_count
 
+                # Set coverage is distinct from the fail-safe binary decision metric:
+                # it checks whether each true label is included in its conformal set.
+                qcp_covered_count = sum(
+                    (("Safe" if int(y) == 0 else "Failure") in pred_set)
+                    for y, pred_set in zip(y_test_flat, prediction_sets)
+                )
+                qcp_coverage = (
+                    qcp_covered_count / total_samples if total_samples else float("nan")
+                )
+
                 # Save to Session State
                 st.session_state.final_results = pd.DataFrame(results)
                 # Fix: Assess raw predictions using raw_probs_flat to avoid scaled distortion
@@ -1452,6 +1462,8 @@ with tab5:
                 st.session_state.ambiguous_count = ambiguous_count
                 st.session_state.certain_count = certain_count
                 st.session_state.total_test_samples = total_samples
+                st.session_state.qcp_covered_count = qcp_covered_count
+                st.session_state.qcp_empirical_coverage = qcp_coverage
                 st.session_state.inference_complete = True
                 st.rerun()
 
@@ -1513,6 +1525,11 @@ with tab5:
                           delta_color="normal")
                 st.metric(" Ambiguous Sets (Needs Intervention)", f"{a_pct:.1f}%", f"{a_count} samples",
                           delta_color="inverse")
+                st.metric(
+                    "Empirical QCP Set Coverage",
+                    f"{100 * st.session_state.get('qcp_empirical_coverage', 0.0):.2f}%",
+                    f"{st.session_state.get('qcp_covered_count', 0)} of {t_count} true labels included"
+                )
                 st.caption(
                     "A well-calibrated model balances high reliability with a low ambiguity rate. Ambiguous sets trigger Phase 6 Islanding.")
 
