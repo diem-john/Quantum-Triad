@@ -63,7 +63,7 @@ def per_group_metrics(y_true, y_pred, groups):
 
 def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
                    test_size=0.25, random_state=42, n_qubits=3, C=1.0,
-                   group_column=None, max_samples=250, layers=2):
+                   group_column=None, max_samples=250, layers=2, b_weight=0.25):
     frame = pd.read_csv(data_path)
     features = features or DEFAULT_FEATURES
     missing = [col for col in features + [label] if col not in frame.columns]
@@ -168,6 +168,9 @@ def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
     fidelity = QuantumFidelityKernel(n_qubits=n_qubits)
     B_fusion_train = fidelity.matrix(X_train_q, X_train_q)
     B_fusion_test = fidelity.matrix(X_test_q, X_train_q)
+    # Keep A as the primary signal by scaling B before concatenation.
+    B_fusion_train = float(b_weight) * B_fusion_train
+    B_fusion_test = float(b_weight) * B_fusion_test
     hybrid_train = np.concatenate([A_train, B_fusion_train], axis=1)
     hybrid_test = np.concatenate([A_test, B_fusion_test], axis=1)
     hybrid_scaler = StandardScaler()
@@ -180,7 +183,8 @@ def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
         **evaluate(y_test, hybrid_pred),
         "per_storm_metrics": per_group_metrics(y_test, hybrid_pred, test_groups),
         "fit_transform_and_predict_seconds": float(time.perf_counter() - start),
-        "fusion": "concatenation of A Pauli-Z expectation features and B fidelity similarities to training samples",
+        "fusion": "A Pauli-Z expectation features concatenated with weighted B fidelity similarities to training samples",
+        "b_fusion_weight": float(b_weight),
         "expectation_feature_shape": list(A_train.shape),
         "fidelity_similarity_shape": list(B_fusion_train.shape),
         "fused_feature_shape": list(hybrid_train.shape),
@@ -220,10 +224,11 @@ def main():
     parser.add_argument("--C", type=float, default=1.0)
     parser.add_argument("--group-column", default=None)
     parser.add_argument("--max-samples", type=int, default=250, help="Set 0 to use all rows.")
+    parser.add_argument("--b-weight", type=float, default=0.25, help="Scale B fidelity features before A+B concatenation (0 disables B).")
     args = parser.parse_args()
     result = run_comparison(args.data, args.output, args.features, args.label, args.test_size,
                             args.random_state, args.n_qubits, args.C, args.group_column,
-                            args.max_samples, args.layers)
+                            args.max_samples, args.layers, args.b_weight)
     print(json.dumps(result, indent=2))
     print(f"Saved metrics to {args.output} and {Path(args.output).with_suffix('.csv')}")
 
