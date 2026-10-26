@@ -566,10 +566,19 @@ with tab1:
                     df_safe = df_export[df_export["Failure_Label"] == 0]
                     df_fail = df_export[df_export["Failure_Label"] == 1]
 
-                    mean_safe = df_safe.iloc[:, :-1].mean().values.tolist() if not df_safe.empty else [0] * len(
-                        selected_features)
-                    mean_fail = df_fail.iloc[:, :-1].mean().values.tolist() if not df_fail.empty else [0] * len(
-                        selected_features)
+                    # Average only the selected numeric model features.
+                    # df_export also contains string/integer metadata (storm_id, snapshot_id, bus_id),
+                    # which must not be included in the radar-chart means.
+                    mean_safe = (
+                        df_safe[selected_features].apply(pd.to_numeric, errors="coerce")
+                        .mean().fillna(0).values.tolist()
+                        if not df_safe.empty else [0] * len(selected_features)
+                    )
+                    mean_fail = (
+                        df_fail[selected_features].apply(pd.to_numeric, errors="coerce")
+                        .mean().fillna(0).values.tolist()
+                        if not df_fail.empty else [0] * len(selected_features)
+                    )
 
                     mean_safe += [mean_safe[0]] if mean_safe else []
                     mean_fail += [mean_fail[0]] if mean_fail else []
