@@ -1,0 +1,39 @@
+name: QKN Approach Comparison Tests
+
+on:
+  push:
+    branches:
+      - qdf_qkn_approach
+  pull_request:
+    branches:
+      - main
+      - qdf_qkn_approach
+  workflow_dispatch:
+
+jobs:
+  comparison-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy==2.2.6 pandas==2.3.3 pennylane==0.42.3 scikit-learn==1.7.2 pytest
+      - name: Run quantum approach comparison tests
+        run: >-
+          python -m pytest -q
+          tests/test_qkn_kernel.py
+          tests/test_qkn_kernel_experiment.py
+          tests/test_qkn_approaches_comparison.py
+      - name: Smoke-test three-way comparison
+        run: >-
+          python -m experiments.compare_qkn_approaches
+          --data data/processed/final_quantum_dataset.csv
+          --output /tmp/qkn-approach-comparison.json
+          --n-qubits 3 --layers 1 --max-samples 30
