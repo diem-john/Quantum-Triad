@@ -53,6 +53,75 @@ def label_distribution_frame(label_sets):
     return pd.DataFrame(rows)
 
 
+
+def stratified_storm_group_split(storm_ids, y_tensor, fractions=(0.60, 0.15, 0.10, 0.15), random_state=42, trials=12000):
+    """Assign whole storms to four partitions, balancing snapshot and positive-node counts."""
+    storm_ids = np.asarray(storm_ids).astype(str)
+    labels = np.asarray(y_tensor)
+    names = ("train", "validation", "calibration", "test")
+    fractions = np.asarray(fractions, dtype=float)
+    fractions = fractions / fractions.sum()
+    groups = np.unique(storm_ids)
+    if len(groups) < len(names):
+        raise ValueError(f"Need at least {len(names)} distinct storms; found {len(groups)}.")
+    stats = {g: np.array([int(np.sum(storm_ids == g)), int(np.sum(labels[storm_ids == g] == 1))], dtype=float) for g in groups}
+    positive_groups = [g for g in groups if stats[g][1] > 0]
+    if len(positive_groups) < len(names):
+        raise ValueError(
+            f"Only {len(positive_groups)} storms contain Failure labels, but four independent "
+            "partitions are requested. Add genuine failure-containing storms or reduce partition "
+            "count; do not synthesize labels or split storms across sets."
+        )
+    total = np.sum(list(stats.values()), axis=0)
+    target = fractions[:, None] * total
+    rng = np.random.default_rng(random_state)
+    best, best_score = None, float("inf")
+    for _ in range(trials):
+        order = list(groups)
+        rng.shuffle(order)
+        order.sort(key=lambda g: (stats[g][1] > 0, stats[g][1], stats[g][0]), reverse=True)
+        assigned = [[] for _ in names]
+        current = np.zeros((len(names), 2), dtype=float)
+        for group in order:
+            gstat = stats[group]
+            scores = []
+            for p in range(len(names)):
+                proposed = current.copy()
+                proposed[p] += gstat
+                score = np.sum(((proposed - target) / np.maximum(target, 1.0)) ** 2)
+                scores.append(score + rng.random() * 0.015)
+            p = int(np.argmin(scores))
+            assigned[p].append(group)
+            current[p] += gstat
+        if any(not part for part in assigned):
+            continue
+        if any(not any(stats[g][1] > 0 for g in part) for part in assigned):
+            continue
+        score = np.sum(((current - target) / np.maximum(target, 1.0)) ** 2)
+        if score < best_score:
+            best, best_score = assigned, score
+    if best is None:
+        raise ValueError("Could not allocate failure-containing storms to all four partitions. Add more independent storms.")
+    indices = {name: np.flatnonzero(np.isin(storm_ids, part)) for name, part in zip(names, best)}
+    groups_by_partition = {name: sorted(part) for name, part in zip(names, best)}
+    return indices, groups_by_partition
+
+
+def smote_training_node_features_only(X_train, y_train, random_state=42):
+    """Training-only SMOTE helper for nodewise baselines, not for reconstructing graph tensors."""
+    from imblearn.over_sampling import SMOTE
+    X = np.asarray(X_train)
+    y = np.asarray(y_train).reshape(-1).astype(int)
+    node_features = X.reshape(-1, X.shape[-2] * X.shape[-1])
+    if len(np.unique(y)) < 2:
+        raise ValueError("Training labels contain only one class; SMOTE requires both classes.")
+    _, counts = np.unique(y, return_counts=True)
+    if int(counts.min()) < 2:
+        raise ValueError("SMOTE needs at least two genuine training examples in the minority class.")
+    sampler = SMOTE(random_state=random_state, k_neighbors=min(5, int(counts.min()) - 1))
+    X_resampled, y_resampled = sampler.fit_resample(node_features, y)
+    return X_resampled, y_resampled
+
 def render_label_distribution_audit(label_sets, title="Label Distribution Audit"):
     """Display and persist class counts for the supplied partitions."""
     report = label_distribution_frame(label_sets)
@@ -593,28 +662,27 @@ with tab1:
                     )
                     st.stop()
 
-                from sklearn.model_selection import GroupShuffleSplit
-                all_idx = np.arange(n_samples)
-                outer_split = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=42)
-                train_cal_idx, test_idx = next(outer_split.split(all_idx, groups=storm_ids))
-                inner_split = GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=43)
-                train_rel, cal_rel = next(inner_split.split(train_cal_idx, groups=storm_ids[train_cal_idx]))
-                train_val_idx, cal_idx = train_cal_idx[train_rel], train_cal_idx[cal_rel]
-                # Split the model-development subset again so validation is independent
-                # from the calibration set used by QCP.
-                val_split = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=44)
-                train_rel2, val_rel = next(
-                    val_split.split(train_val_idx, groups=storm_ids[train_val_idx])
-                )
-                train_idx, val_idx = train_val_idx[train_rel2], train_val_idx[val_rel]
+                try:
+                    partition_indices, partition_storms = stratified_storm_group_split(
+                        storm_ids, Y_tensor, fractions=(0.60, 0.15, 0.10, 0.15), random_state=42
+                    )
+                except ValueError as split_error:
+                    st.error(f"Class-aware storm split could not be created: {split_error}")
+                    st.stop()
 
-                train_storms = set(storm_ids[train_idx])
-                val_storms = set(storm_ids[val_idx])
-                cal_storms = set(storm_ids[cal_idx])
-                test_storms = set(storm_ids[test_idx])
-                if (
-                    train_storms & val_storms or train_storms & cal_storms or train_storms & test_storms
-                    or val_storms & cal_storms or val_storms & test_storms or cal_storms & test_storms
+                train_idx = partition_indices["train"]
+                val_idx = partition_indices["validation"]
+                cal_idx = partition_indices["calibration"]
+                test_idx = partition_indices["test"]
+                train_storms = set(partition_storms["train"])
+                val_storms = set(partition_storms["validation"])
+                cal_storms = set(partition_storms["calibration"])
+                test_storms = set(partition_storms["test"])
+                all_partition_storms = [train_storms, val_storms, cal_storms, test_storms]
+                if any(
+                    all_partition_storms[i] & all_partition_storms[j]
+                    for i in range(len(all_partition_storms))
+                    for j in range(i + 1, len(all_partition_storms))
                 ):
                     st.error("Event split integrity check failed: storm overlap detected.")
                     st.stop()
@@ -629,8 +697,7 @@ with tab1:
                 st.session_state.test_storm_ids = sorted(test_storms)
 
                 # Audit the complete label pool and every current event-level partition.
-                # Current pipeline has train/calibration/test only; calibration is also used
-                # for epoch selection below, so it is not an independent validation set yet.
+                # Validation is used for model selection; calibration remains held out for QCP only.
                 full_labels = Y_tensor.reshape(-1)
                 train_labels = Y_tensor[train_idx].reshape(-1)
                 val_labels = Y_tensor[val_idx].reshape(-1)
