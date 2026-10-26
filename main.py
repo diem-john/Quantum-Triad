@@ -1514,6 +1514,19 @@ with tab5:
             f"Evaluating model reliability on unseen test data using the established conformal threshold $q_{{\hat{{h}}}}$ = **{st.session_state.q_hat:.4f}**.")
 
         # 1. EXECUTE INFERENCE
+        threshold_policy = st.selectbox(
+            "Validation threshold policy",
+            ["Maximize F2 (recall-weighted)", "Maximize precision subject to minimum recall"],
+            key="phase5_threshold_policy",
+            help="Choose the policy using validation labels only. The held-out test labels are never used to choose a threshold."
+        )
+        min_recall_target = st.slider(
+            "Minimum validation recall constraint",
+            min_value=0.50, max_value=0.95, value=0.80, step=0.05,
+            key="phase5_min_recall_target",
+            help="Used only by the constrained-precision policy. If no threshold meets this target, the app reports that and falls back to the best-recall validation threshold."
+        )
+
         if st.button("Execute Inference & Generate Metrics", type="primary"):
             import torch
             import numpy as np
@@ -1620,11 +1633,11 @@ with tab5:
                 y_val_flat = np.asarray(st.session_state.y_val).reshape(-1).astype(int)
                 y_test_flat = np.asarray(st.session_state.y_test).reshape(-1).astype(int)
 
-                def select_validation_threshold(y_true, probabilities, beta=2.0):
-                    """Maximize validation F-beta; break ties by precision, then threshold."""
+                def select_validation_threshold(y_true, probabilities, policy, min_recall=0.80, beta=2.0):
+                    """Choose a binary threshold using validation labels only."""
                     from sklearn.metrics import precision_score, recall_score, fbeta_score
                     y_true = np.asarray(y_true).astype(int).reshape(-1)
-                    probabilities = np.asarray(probabilities).reshape(-1)
+                    probabilities = np.asarray(probabilities, dtype=float).reshape(-1)
                     if len(y_true) != len(probabilities):
                         raise ValueError(
                             f"Validation labels/probabilities mismatch: {len(y_true)} vs {len(probabilities)}."
@@ -1634,21 +1647,46 @@ with tab5:
                             "Validation threshold tuning requires both Safe and Failure labels. "
                             "Review the storm-level partition before evaluating."
                         )
+                    if not np.isfinite(probabilities).all():
+                        raise ValueError("Validation probabilities contain non-finite values.")
                     candidates = np.unique(np.concatenate(([0.0, 0.5, 1.0], probabilities)))
-                    best = None
+                    scored = []
                     for threshold in candidates:
                         pred = (probabilities >= threshold).astype(int)
                         precision = precision_score(y_true, pred, zero_division=0)
                         recall = recall_score(y_true, pred, zero_division=0)
                         f_beta = fbeta_score(y_true, pred, beta=beta, zero_division=0)
-                        candidate = (f_beta, precision, float(threshold), recall)
-                        if best is None or candidate[:3] > best[:3]:
-                            best = candidate
-                    return best[2], {"F2": best[0], "Precision": best[1], "Recall": best[3]}
+                        scored.append({
+                            "threshold": float(threshold), "F2": float(f_beta),
+                            "Precision": float(precision), "Recall": float(recall)
+                        })
+                    if policy == "Maximize precision subject to minimum recall":
+                        eligible = [row for row in scored if row["Recall"] >= min_recall]
+                        if eligible:
+                            best = max(eligible, key=lambda row: (
+                                row["Precision"], row["Recall"], row["threshold"]
+                            ))
+                            best["Policy outcome"] = f"Met recall >= {min_recall:.0%}"
+                        else:
+                            best = max(scored, key=lambda row: (
+                                row["Recall"], row["Precision"], row["threshold"]
+                            ))
+                            best["Policy outcome"] = (
+                                f"No threshold met recall >= {min_recall:.0%}; "
+                                "selected highest-recall validation threshold"
+                            )
+                    else:
+                        best = max(scored, key=lambda row: (
+                            row["F2"], row["Precision"], row["threshold"]
+                        ))
+                        best["Policy outcome"] = "Maximized validation F2"
+                    return best["threshold"], best
 
-                raw_threshold, raw_val_scores = select_validation_threshold(y_val_flat, raw_val_flat)
+                raw_threshold, raw_val_scores = select_validation_threshold(
+                    y_val_flat, raw_val_flat, threshold_policy, min_recall_target
+                )
                 calibrated_threshold, calibrated_val_scores = select_validation_threshold(
-                    y_val_flat, calibrated_val_flat
+                    y_val_flat, calibrated_val_flat, threshold_policy, min_recall_target
                 )
                 st.session_state.raw_decision_threshold = float(raw_threshold)
                 st.session_state.calibrated_decision_threshold = float(calibrated_threshold)
@@ -1661,8 +1699,9 @@ with tab5:
 
                 st.markdown("#### Validation-Only Decision Threshold Selection")
                 st.caption(
-                    "Thresholds maximize validation F2 (recall-weighted), with precision and then threshold "
-                    "used to break ties. Test labels are not used for threshold selection."
+                    f"Policy: {threshold_policy}. "
+                    + (f"Minimum validation recall target: {min_recall_target:.0%}. " if threshold_policy == "Maximize precision subject to minimum recall" else "")
+                    + "Thresholds are selected from validation predictions only; held-out test labels are not used for threshold selection."
                 )
                 st.dataframe(pd.DataFrame([
                     {"Probability stream": "Raw", "Selected threshold": raw_threshold, **raw_val_scores},
@@ -1791,6 +1830,92 @@ with tab5:
                 use_container_width=True,
                 hide_index=True,
             )
+            # Probability quality is assessed separately from thresholded classification.
+            # Test diagnostics are reporting-only and never feed back into threshold selection.
+            from sklearn.metrics import brier_score_loss, log_loss
+            from sklearn.calibration import calibration_curve
+
+            def probability_quality(y_true, probabilities):
+                y_true = np.asarray(y_true, dtype=int).reshape(-1)
+                probabilities = np.clip(np.asarray(probabilities, dtype=float).reshape(-1), 1e-7, 1 - 1e-7)
+                if len(y_true) != len(probabilities) or len(np.unique(y_true)) < 2:
+                    return {"Brier score": np.nan, "Log loss": np.nan}
+                return {
+                    "Brier score": float(brier_score_loss(y_true, probabilities)),
+                    "Log loss": float(log_loss(y_true, probabilities, labels=[0, 1]))
+                }
+
+            quality_rows = []
+            for split_name, split_y, raw_p, calibrated_p in [
+                ("Validation", y_val_flat, raw_val_flat, calibrated_val_flat),
+                ("Held-out test (reporting only)", y_test_flat, raw_probs_flat, probs_flat),
+            ]:
+                quality_rows.append({
+                    "Split": split_name, "Probability stream": "Raw",
+                    **probability_quality(split_y, raw_p)
+                })
+                quality_rows.append({
+                    "Split": split_name, "Probability stream": "Temperature-scaled",
+                    **probability_quality(split_y, calibrated_p)
+                })
+            st.markdown("#### Probability Quality and Calibration Diagnostics")
+            st.caption(
+                "Lower Brier score and log loss are better. Test-set values are descriptive only; "
+                "do not use them to choose temperature, thresholds, model settings, or features."
+            )
+            st.dataframe(pd.DataFrame(quality_rows).style.format({
+                "Brier score": "{:.5f}", "Log loss": "{:.5f}"
+            }, na_rep="N/A"), use_container_width=True, hide_index=True)
+
+            reliability_rows = []
+            for stream_name, probabilities in [
+                ("Raw", raw_probs_flat),
+                ("Temperature-scaled", probs_flat),
+            ]:
+                frac_positive, mean_predicted = calibration_curve(
+                    y_test_flat, np.clip(probabilities, 1e-7, 1 - 1e-7),
+                    n_bins=8, strategy="quantile"
+                )
+                for bin_id, (mean_p, observed_rate) in enumerate(zip(mean_predicted, frac_positive), start=1):
+                    reliability_rows.append({
+                        "Probability stream": stream_name, "Bin": bin_id,
+                        "Mean predicted failure probability": float(mean_p),
+                        "Observed positive fraction": float(observed_rate)
+                    })
+            reliability_df = pd.DataFrame(reliability_rows)
+            if not reliability_df.empty:
+                reliability_fig = go.Figure()
+                reliability_fig.add_trace(go.Scatter(
+                    x=[0, 1], y=[0, 1], mode="lines", name="Perfect reliability"
+                ))
+                for stream_name in ["Raw", "Temperature-scaled"]:
+                    subset = reliability_df[reliability_df["Probability stream"] == stream_name]
+                    reliability_fig.add_trace(go.Scatter(
+                        x=subset["Mean predicted failure probability"],
+                        y=subset["Observed positive fraction"], mode="lines+markers",
+                        name=stream_name
+                    ))
+                reliability_fig.update_layout(
+                    title="Held-out test reliability diagram (descriptive only)",
+                    xaxis_title="Mean predicted failure probability",
+                    yaxis_title="Observed Failure-label fraction",
+                    xaxis=dict(range=[0, 1]), yaxis=dict(range=[0, 1])
+                )
+                st.plotly_chart(reliability_fig, use_container_width=True)
+                st.dataframe(reliability_df, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download reliability-bin diagnostics",
+                    reliability_df.to_csv(index=False),
+                    file_name="probability_reliability_bins.csv",
+                    mime="text/csv",
+                    key="phase5_reliability_download"
+                )
+
+            st.caption(
+                "Interpretation note: Failure_Label is a synthetic grid-vulnerability proxy derived from the configured risk rule, "
+                "not an observed record of real grid failures. Metrics measure agreement with that proxy."
+            )
+
             st.caption(
                 f"Test set: {len(y_test)} bus labels; "
                 f"{int(np.sum(np.asarray(y_test).reshape(-1) == 1))} actual Failure labels. "
