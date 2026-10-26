@@ -54,6 +54,11 @@ with tabs[0]:
     group_col = st.selectbox("Typhoon/event identifier", options=list(frame.columns), index=(list(frame.columns).index(id_candidates[0]) if id_candidates else 0), key="group_col")
     label_col = st.selectbox("Prediction target", options=list(frame.columns), index=(list(frame.columns).index(label_candidates[0]) if label_candidates else 0), key="label_col")
     group_count = int(frame[group_col].nunique(dropna=True))
+    confirm_event_id = st.checkbox(
+        "I confirm this column uniquely identifies the complete source typhoon/event for every row.",
+        value=False,
+        help="Do not select a feature, snapshot number, or bus ID. Use storm_id/seq_id/event_id that is constant for all observations from one typhoon."
+    )
     c1, c2 = st.columns(2)
     c1.metric("Distinct events", group_count)
     c2.metric("Target classes", int(frame[label_col].nunique(dropna=True)))
@@ -77,7 +82,7 @@ with tabs[1]:
         default_features = numeric_candidates[:3]
     features = st.multiselect("Input features (one qubit per selected feature)", numeric_candidates, default=default_features[:3])
     st.caption(f"Selected features: {len(features)} → {len(features)} qubits.")
-    can_run = group_col != label_col and group_count >= 3 and len(features) >= 2 and len(features) <= 8 and frame[label_col].nunique(dropna=True) == 2 and frame[group_col].notna().all()
+    can_run = confirm_event_id and group_col != label_col and group_count >= 3 and len(features) >= 2 and len(features) <= 8 and frame[label_col].nunique(dropna=True) == 2 and frame[group_col].notna().all()
     if len(features) > 8:
         st.warning("Select 8 or fewer features for this simulator-based benchmark.")
     if st.button("Run unseen-typhoon benchmark", type="primary", disabled=not can_run):
