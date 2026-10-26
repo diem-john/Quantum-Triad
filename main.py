@@ -15,6 +15,13 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import warnings
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix
+)
 
 warnings.filterwarnings('ignore')
 
@@ -566,23 +573,35 @@ with tab1:
                     df_safe = df_export[df_export["Failure_Label"] == 0]
                     df_fail = df_export[df_export["Failure_Label"] == 1]
 
-                    # Average only the selected numeric model features.
-                    # df_export also contains string/integer metadata (storm_id, snapshot_id, bus_id),
-                    # which must not be included in the radar-chart means.
+                    # Use the actual feature column names in df_export.
+                    radial_cols = [f"{feat} (rad)" for feat in selected_features]
+
+                    # Calculate means using only selected feature columns.
                     mean_safe = (
-                        df_safe[selected_features].apply(pd.to_numeric, errors="coerce")
-                        .mean().fillna(0).values.tolist()
-                        if not df_safe.empty else [0] * len(selected_features)
-                    )
-                    mean_fail = (
-                        df_fail[selected_features].apply(pd.to_numeric, errors="coerce")
-                        .mean().fillna(0).values.tolist()
-                        if not df_fail.empty else [0] * len(selected_features)
+                        df_safe[radial_cols]
+                        .apply(pd.to_numeric, errors="coerce")
+                        .mean()
+                        .fillna(0)
+                        .values.tolist()
+                        if not df_safe.empty
+                        else [0] * len(selected_features)
                     )
 
+                    mean_fail = (
+                        df_fail[radial_cols]
+                        .apply(pd.to_numeric, errors="coerce")
+                        .mean()
+                        .fillna(0)
+                        .values.tolist()
+                        if not df_fail.empty
+                        else [0] * len(selected_features)
+                    )
+
+                    # Close the radar chart by repeating the first feature.
                     mean_safe += [mean_safe[0]] if mean_safe else []
                     mean_fail += [mean_fail[0]] if mean_fail else []
-                    radial_cols = [f"{feat} (rad)" for feat in selected_features] + [f"{selected_features[0]} (rad)"]
+
+                    radial_cols += [radial_cols[0]] if radial_cols else []
 
                     fig_radar = go.Figure()
                     fig_radar.add_trace(
@@ -1145,9 +1164,18 @@ with tab4:
 
 # --- TAB 5: PHASE 5 - INFERENCE TESTING ---
 with tab5:
+    st.write("Final Model Configuration:")
+    st.write(st.session_state.get("final_model_config", {}))
+
     # Ensure keys exist even if not yet populated
-    if 'y_pred_raw' not in st.session_state: st.session_state.y_pred_raw = None
-    if 'y_pred_qcp' not in st.session_state: st.session_state.y_pred_qcp = None
+    if 'y_pred_raw' not in st.session_state:
+        st.session_state.y_pred_raw = None
+
+    if 'y_pred_calibrated' not in st.session_state:
+        st.session_state.y_pred_calibrated = None
+
+    if 'y_pred_qcp' not in st.session_state:
+        st.session_state.y_pred_qcp = None
 
     if not st.session_state.get('model_trained', False):
         st.error(" Model not found. Please complete Phase 3 first.")
@@ -1193,6 +1221,43 @@ with tab5:
                     X_test_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_test)
                     model_in_channels = int(config.get('model_in_channels', config['q_qubits']))
 
+                st.write("### Feature Pipeline Diagnostics")
+
+                st.write(
+                    "Selected architecture:",
+                    config.get("architecture")
+                )
+
+                st.write(
+                    "Configured input channels:",
+                    config.get("model_in_channels")
+                )
+
+                st.write(
+                    "Quantum input shape:",
+                    tuple(st.session_state.X_seq_test.shape)
+                )
+
+                st.write(
+                    "Encoded test feature shape:",
+                    tuple(X_test_q.shape)
+                )
+
+                st.write(
+                    "Feature dtype:",
+                    str(X_test_q.dtype)
+                )
+
+                st.write(
+                    "Feature contains NaN:",
+                    bool(torch.isnan(X_test_q).any().item())
+                )
+
+                st.write(
+                    "Feature contains Inf:",
+                    bool(torch.isinf(X_test_q).any().item())
+                )
+
                 # Rebuild QSTGNN with the same fused channel dimension used during training.
                 model = QuantumSpatiotemporalGNN(
                     in_channels=model_in_channels, seq_len=4, conv_out=config['c_conv'],
@@ -1229,6 +1294,13 @@ with tab5:
                 raw_probs_flat = np.concatenate(raw_probs_list, axis=0).flatten()
                 y_test_flat = st.session_state.y_test.flatten()
 
+                # Convert calibrated probabilities into binary class predictions.
+                # probs_flat contains the temperature-scaled probabilities.
+                y_calibrated = (probs_flat >= 0.5).astype(int)
+
+                # Save predictions for the Phase 5 evaluation section.
+                st.session_state.y_pred_calibrated = y_calibrated
+                
                 # Apply QCP Sets
                 q_hat = st.session_state.q_hat
                 prediction_sets = []
@@ -1279,8 +1351,12 @@ with tab5:
             from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 
             y_test = st.session_state.y_test.flatten()
-            y_raw = st.session_state.y_pred_raw
-            y_qcp = st.session_state.y_pred_qcp
+
+            y_raw = np.asarray(st.session_state.y_pred_raw).flatten()
+            y_calibrated = np.asarray(
+                st.session_state.y_pred_calibrated
+            ).flatten()
+            y_qcp = np.asarray(st.session_state.y_pred_qcp).flatten()
 
 
             def get_metrics(y_true, y_pred):
@@ -1293,6 +1369,7 @@ with tab5:
 
 
             m_raw = get_metrics(y_test, y_raw)
+            m_calibrated = get_metrics(y_test, y_calibrated)
             m_qcp = get_metrics(y_test, y_qcp)
 
             # --- PREDICTION CONFIDENCE ---
@@ -1332,24 +1409,119 @@ with tab5:
             st.divider()
 
             # --- PERFORMANCE COMPARISON ---
-            st.markdown("####  Performance Comparison")
-            cols = st.columns(4)
-            metrics = ["Acc", "Pre", "Rec", "F1"]
-            for i, name in enumerate(metrics):
-                delta = (m_qcp[name] - m_raw[name]) * 100
-                cols[i].metric(name, f"{m_qcp[name]:.2%}", f"{delta:+.2f}%")
+            st.markdown("#### Performance Comparison")
 
+            comparison_df = pd.DataFrame(
+                [m_raw, m_calibrated, m_qcp],
+                index=["Raw Model", "Calibrated Model", "QCP Fail-Safe"]
+            )
+
+            st.dataframe(
+                comparison_df.style.format("{:.2%}"),
+                use_container_width=True
+            )
+
+
+            def get_class_distribution(values, name):
+                values = np.asarray(values).reshape(-1).astype(int)
+
+                total = len(values)
+                safe_count = int(np.sum(values == 0))
+                fail_count = int(np.sum(values == 1))
+
+                return {
+                    "Dataset": name,
+                    "Safe (0)": safe_count,
+                    "Fail (1)": fail_count,
+                    "Total": total,
+                    "Safe (%)": round(100 * safe_count / total, 2) if total else 0.0,
+                    "Fail (%)": round(100 * fail_count / total, 2) if total else 0.0,
+                }
+
+
+            y_test = np.asarray(st.session_state.y_test).reshape(-1)
+            y_raw = np.asarray(st.session_state.y_pred_raw).reshape(-1)
+            y_calibrated = np.asarray(
+                st.session_state.y_pred_calibrated
+            ).reshape(-1)
+            y_qcp = np.asarray(st.session_state.y_pred_qcp).reshape(-1)
+
+            st.markdown("### Class Distribution Diagnostics")
+
+            distribution_df = pd.DataFrame([
+                get_class_distribution(y_test, "Ground Truth"),
+                get_class_distribution(y_raw, "Raw Model"),
+                get_class_distribution(y_calibrated, "Calibrated Model"),
+                get_class_distribution(y_qcp, "QCP Fail-Safe"),
+            ])
+
+            st.dataframe(distribution_df, use_container_width=True)
+
+            # Verify that the number of predictions matches the number of labels.
+            if not (
+                    len(y_test) == len(y_raw) == len(y_calibrated) == len(y_qcp)
+            ):
+                st.error(
+                    "Mismatch between the number of ground-truth labels "
+                    "and prediction values."
+                )
+            else:
+                st.success(
+                    f"All prediction arrays contain {len(y_test):,} values."
+                )
+
+            # Check for unexpected label values.
+            st.write("Ground-truth unique labels:", np.unique(y_test))
+            st.write("Raw prediction unique labels:", np.unique(y_raw))
+            st.write("Calibrated prediction unique labels:", np.unique(y_calibrated))
+            st.write("QCP prediction unique labels:", np.unique(y_qcp))
 
             # --- CONFUSION MATRICES ---
             def plot_cm(cm, title, scale):
-                return px.imshow(cm, text_auto=True, color_continuous_scale=scale,
-                                 x=['Safe', 'Fail'], y=['Safe', 'Fail'], title=title)
+                return px.imshow(
+                    cm,
+                    text_auto=True,
+                    color_continuous_scale=scale,
+                    x=["Safe", "Failure"],
+                    y=["Safe", "Failure"],
+                    labels={
+                        "x": "Predicted Class",
+                        "y": "Actual Class",
+                        "color": "Count"
+                    },
+                    title=title,
+                    aspect="auto"
+                )
 
 
-            c1, c2 = st.columns(2)
-            c1.plotly_chart(plot_cm(confusion_matrix(y_test, y_raw), "Raw Model", "Blues"), use_container_width=True)
-            c2.plotly_chart(plot_cm(confusion_matrix(y_test, y_qcp), "QCP-FailSafe Model", "Reds"),
-                            use_container_width=True)
+            c1, c2, c3 = st.columns(3)
+
+            c1.plotly_chart(
+                plot_cm(
+                    confusion_matrix(y_test, y_raw, labels=[0, 1]),
+                    "Raw Model",
+                    "Blues"
+                ),
+                use_container_width=True
+            )
+
+            c2.plotly_chart(
+                plot_cm(
+                    confusion_matrix(y_test, y_calibrated, labels=[0, 1]),
+                    "Calibrated Model",
+                    "Greens"
+                ),
+                use_container_width=True
+            )
+
+            c3.plotly_chart(
+                plot_cm(
+                    confusion_matrix(y_test, y_qcp, labels=[0, 1]),
+                    "QCP Fail-Safe Model",
+                    "Reds"
+                ),
+                use_container_width=True
+            )
 
             # --- ALERT LEDGER ---
             st.markdown("####  Node Alert Report")
@@ -1362,6 +1534,7 @@ with tab5:
                  'background-color: #b3ffb3;'),
                 subset=['Alert_Level']), use_container_width=True)
 
+
             if st.button("Commit Alerts to CTQW Islanding Engine", type="primary"):
                 st.session_state.islanding_alerts = df_res[df_res["Alert_Level"] != "Low"]
 
@@ -1370,6 +1543,7 @@ with tab5:
                 st.session_state.risky_buses = list(set(risky_bus_list))
 
                 st.success(" Alerts committed. Proceed to Phase 6 (Quantum Islanding).")
+
 
 # --- TAB 6: PHASE 6 - QUANTUM WALK ISLANDING ---
 with tab6:
