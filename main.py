@@ -185,7 +185,7 @@ with tab1:
     with col2:
         st.info(
             "**Geospatial & Temporal Setup**\n\nThe 33-bus system is mapped to Chiayi. The extraction pipeline now builds full **Grid Snapshots** required for Graph Neural Network message passing.")
-        ids = int(st.slider("How Many Typhoons to Process:", 1, 10, 3))
+        ids = int(st.slider("How Many Typhoons to Process:", 4, 10, 8, help="Use enough distinct storm events to support independent train, validation, calibration, and test partitions."))
         forecast_horizon = st.slider("Forecast Horizon (Lead-Time Steps):", 1, 6, 2)
         target_snapshots = st.slider("QPU Snapshot Budget:", 10, 100, 25,
                                      help="How many full grid-states to extract. 25 snapshots = 825 individual bus evaluations.")
@@ -306,6 +306,14 @@ with tab1:
                     # --- STRATIFIED SNAPSHOT SELECTION ---
                     # Separate snapshots into stressful (contains at least one failure) and safe
                     df_snapshots = pd.DataFrame(grid_snapshots)
+
+                    # Audit all generated snapshots before budget selection or data splitting.
+                    all_generated_labels = np.concatenate(df_snapshots["labels"].to_list())
+                    render_label_distribution_audit(
+                        {"All generated bus labels (before snapshot selection/splitting)": all_generated_labels},
+                        title="Pre-Split Label Distribution"
+                    )
+
                     df_stress = df_snapshots[df_snapshots['has_stress'] == True]
                     df_safe = df_snapshots[df_snapshots['has_stress'] == False]
 
@@ -577,8 +585,12 @@ with tab1:
                 unique_storms = np.unique(storm_ids)
 
                 # Hold out complete typhoon events; never split snapshots from one storm across partitions.
-                if len(unique_storms) < 3:
-                    st.error(f"Only {len(unique_storms)} distinct storm event(s) are available. Extract at least 3 storms for independent train, calibration, and test events.")
+                if len(unique_storms) < 4:
+                    st.error(
+                        f"Only {len(unique_storms)} distinct storm event(s) are available. "
+                        "Extract at least 4 distinct storms to create independent train, validation, "
+                        "calibration, and test partitions."
+                    )
                     st.stop()
 
                 from sklearn.model_selection import GroupShuffleSplit
