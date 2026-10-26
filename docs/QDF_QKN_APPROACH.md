@@ -56,3 +56,27 @@ The JSON and CSV report accuracy, precision, recall, F1, elapsed fit-and-predict
 - Select hyperparameters using training/validation data only; do not tune on the test set.
 - Current kernel uses PennyLane `default.qubit` statevector simulation, not quantum hardware.
 - A successful test run establishes implementation checks, not predictive superiority or quantum advantage.
+
+
+## Matched comparison of Approach A, Approach B, and classical baseline
+
+Run the three-way comparison:
+
+```bash
+python -m experiments.compare_qkn_approaches \
+  --data data/processed/final_quantum_dataset.csv \
+  --output outputs/qkn_approach_comparison.json \
+  --n-qubits 3 --layers 2 --C 1.0 --max-samples 250
+```
+
+The runner uses one common train/test split and the same labels for all three paths:
+
+1. **Approach A (representation ablation):** QKN-style AngleEmbedding + StronglyEntanglingLayers, measured as Pauli-Z expectation values, followed by an RBF-SVC.
+2. **Approach B:** quantum fidelity Gram matrix and precomputed-kernel SVC.
+3. **Classical control:** standardized input features followed by an RBF-SVC.
+
+All scalers are fitted on the training partition only. The runner exports JSON and CSV metrics. The expectation-value circuit is simulated with PennyLane `default.qubit` for this comparison; this is not a hardware benchmark.
+
+**Scope caveat:** this is a matched comparison of quantum feature representations, not a complete evaluation of the full Approach A spatiotemporal GNN. The checked-in dataset is row-wise and lacks time-window sequences, node identifiers, and graph edge data needed to instantiate the full GNN without inventing structure. Do not describe the RBF-SVC downstream classifier as the full Approach A architecture. To compare full A versus B, first prepare event-aware sequence tensors and the corresponding graph topology, then evaluate the GNN and kernel model on identical event-level partitions.
+
+The default sample-level split remains exploratory because the checked-in dataset has no storm/event ID. Do not use it to claim unseen-storm generalization.
