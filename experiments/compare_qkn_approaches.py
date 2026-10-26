@@ -51,13 +51,45 @@ def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
     missing = [col for col in features + [label] if col not in frame.columns]
     if missing:
         raise ValueError(f"Required columns missing from {data_path}: {missing}")
-    frame = frame.dropna(subset=features + [label]).copy()
+    required = features + [label] + ([group_column] if group_column else [])
+    frame = frame.dropna(subset=required).copy()
+    if group_column and frame[group_column].nunique() < 3:
+        raise ValueError("Event-level evaluation requires at least 3 distinct groups.")
     if max_samples and len(frame) > max_samples:
-        frame, _ = train_test_split(frame, train_size=max_samples, random_state=random_state,
-                                    stratify=frame[label])
+        if group_column:
+            # Sample whole events, never individual rows, before making the holdout.
+            rng = np.random.RandomState(random_state)
+            groups = frame[group_column].drop_duplicates().to_numpy()
+            rng.shuffle(groups)
+            selected_groups = []
+            selected_rows = 0
+            for group in groups:
+                group_rows = int((frame[group_column] == group).sum())
+                if selected_rows and selected_rows + group_rows > max_samples:
+                    continue
+                selected_groups.append(group)
+                selected_rows += group_rows
+                if selected_rows >= max_samples:
+                    break
+            frame = frame[frame[group_column].isin(selected_groups)].copy()
+            if frame[group_column].nunique() < 3:
+                raise ValueError("The row budget retained fewer than 3 complete events. Increase max_samples.")
+        else:
+            frame, _ = train_test_split(frame, train_size=max_samples, random_state=random_state,
+                                        stratify=frame[label])
     X_train, X_test, y_train, y_test, split_kind = split_data(
         frame, features, label, test_size, random_state, group_column
     )
+    test_groups = None
+    if group_column:
+        groups = frame[group_column].to_numpy()
+        split = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+        train_idx, test_idx = next(split.split(frame[features].to_numpy(), frame[label].to_numpy(), groups))
+        test_groups = groups[test_idx]
+        train_events = sorted(map(str, pd.unique(groups[train_idx])))
+        test_events = sorted(map(str, pd.unique(test_groups)))
+        if set(train_events) & set(test_events):
+            raise RuntimeError("Event leakage detected: a group occurs in both partitions.")
     if len(features) != n_qubits:
         raise ValueError(f"Expected one qubit per feature: {len(features)} features, n_qubits={n_qubits}.")
 
@@ -74,6 +106,8 @@ def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
         "split_type": split_kind, "random_state": random_state,
         "n_samples": int(len(frame)), "n_train": int(len(y_train)), "n_test": int(len(y_test)),
         "n_qubits": n_qubits, "layers": layers, "C": C,
+        "train_event_ids": train_events if group_column else [],
+        "test_event_ids": test_events if group_column else [],
         "comparison_scope": "Approach A feature-map isolation; full spatiotemporal GNN not run",
         "notes": (
             "Exploratory sample-level split; no event identifier is present. Do not interpret as unseen-storm generalization."
