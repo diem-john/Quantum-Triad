@@ -770,6 +770,45 @@ with tab1:
                 }, title="Full and Partition Label Distributions")
                 st.session_state.label_distribution_report = distribution_report.to_dict("records")
 
+                # Per-storm prevalence audit helps explain why event-level partitions
+                # can have different class proportions without leaking storm snapshots.
+                per_storm_rows = []
+                partition_lookup = {
+                    "Training": (train_idx, train_storms),
+                    "Validation": (val_idx, val_storms),
+                    "Calibration": (cal_idx, cal_storms),
+                    "Held-out testing": (test_idx, test_storms),
+                }
+                for partition_name, (sample_indices, storm_set) in partition_lookup.items():
+                    for storm_id in sorted(storm_set):
+                        storm_sample_mask = storm_ids[sample_indices] == str(storm_id)
+                        storm_labels = Y_tensor[sample_indices][storm_sample_mask].reshape(-1)
+                        total_nodes = int(storm_labels.size)
+                        failures = int(np.sum(storm_labels == 1))
+                        per_storm_rows.append({
+                            "Partition": partition_name,
+                            "Storm ID": str(storm_id),
+                            "Snapshots": int(np.sum(storm_sample_mask)),
+                            "Bus labels": total_nodes,
+                            "Failure labels": failures,
+                            "Failure (%)": round(100.0 * failures / total_nodes, 2) if total_nodes else 0.0,
+                        })
+                per_storm_report = pd.DataFrame(per_storm_rows)
+                st.markdown("#### Per-Storm Failure Prevalence Audit")
+                st.caption(
+                    "Use this table to identify whether a few high-risk storms dominate the positive labels. "
+                    "All snapshots from a storm remain in one partition."
+                )
+                st.dataframe(per_storm_report, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Download Per-Storm Prevalence Audit (CSV)",
+                    data=per_storm_report.to_csv(index=False),
+                    file_name="per_storm_prevalence_audit.csv",
+                    mime="text/csv",
+                    key="per_storm_prevalence_audit_download",
+                )
+                st.session_state.per_storm_prevalence_report = per_storm_report.to_dict("records")
+
                 st.warning(
                     "Check the distribution table above. If any partition lacks either class, do not interpret "
                     "binary Recall/Precision/F1 for that partition as a complete evaluation. Increase the number "
@@ -1730,6 +1769,33 @@ with tab5:
                 "Threshold": float(st.session_state.get("calibrated_decision_threshold", 0.5)),
             }
             st.session_state.architecture_benchmark = architecture_benchmark
+
+            st.markdown("#### Held-Out Test Metrics")
+            st.caption(
+                "Raw and temperature-scaled binary predictions use thresholds selected on validation data only. "
+                "QCP fail-safe is a separate uncertainty-driven decision rule and does not use these thresholds."
+            )
+            metric_rows = [
+                {"Method": "Raw model", **m_raw, "Decision threshold": float(st.session_state.get("raw_decision_threshold", 0.5))},
+                {"Method": "Temperature-scaled model", **m_calibrated, "Decision threshold": float(st.session_state.get("calibrated_decision_threshold", 0.5))},
+                {"Method": "QCP fail-safe", **m_qcp, "Decision threshold": np.nan},
+            ]
+            st.dataframe(
+                pd.DataFrame(metric_rows).rename(columns={
+                    "Acc": "Accuracy", "Pre": "Precision", "Rec": "Recall", "F1": "F1"
+                }).style.format({
+                    "Accuracy": "{:.2%}", "Precision": "{:.2%}",
+                    "Recall": "{:.2%}", "F1": "{:.2%}",
+                    "Decision threshold": "{:.4f}",
+                }, na_rep="N/A"),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                f"Test set: {len(y_test)} bus labels; "
+                f"{int(np.sum(np.asarray(y_test).reshape(-1) == 1))} actual Failure labels. "
+                "Thresholds were fixed before calculating these test metrics."
+            )
 
             st.markdown("#### A-only vs A+B Architecture Benchmark")
             st.caption(
