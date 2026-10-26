@@ -56,10 +56,18 @@ def label_distribution_frame(label_sets):
 
 def stratified_storm_group_split(storm_ids, y_tensor, fractions=(0.60, 0.15, 0.10, 0.15), random_state=42, trials=500):
     """Allocate whole storms with multi-start assignment and safe pair-swap refinement."""
-    storm_ids = np.asarray(storm_ids).astype(str)
-    labels = np.asarray(y_tensor).reshape(-1)
-    if len(storm_ids) != len(labels):
-        raise ValueError(f"Storm ID count ({len(storm_ids)}) does not match label count ({len(labels)}).")
+    storm_ids = np.asarray(storm_ids).astype(str).reshape(-1)
+    # storm_ids has one entry per snapshot/sample; labels may have one label
+    # per sample or a bus-level matrix shaped (samples, nodes). Keep the
+    # sample axis intact so all bus labels from a snapshot stay with its storm.
+    labels = np.asarray(y_tensor)
+    if labels.ndim == 0 or labels.shape[0] != len(storm_ids):
+        label_count = 0 if labels.ndim == 0 else labels.shape[0]
+        raise ValueError(
+            f"Storm ID count ({len(storm_ids)}) does not match label sample count ({label_count}). "
+            "Expected one storm ID per snapshot/sample; pass bus-level labels as a 2D array "
+            "without flattening the sample axis."
+        )
     names = ("train", "validation", "calibration", "test")
     fractions = np.asarray(fractions, dtype=float)
     if len(fractions) != len(names) or np.any(fractions <= 0):
