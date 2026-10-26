@@ -1007,6 +1007,15 @@ with tab3:
                 help="Hybrid mode fuses QKN expectation values with fidelity similarities to training-only quantum landmarks before graph-temporal learning."
             )
             st.session_state.model_architecture = model_architecture
+            b_fusion_weight = st.slider(
+                "B-branch fusion weight",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.25,
+                step=0.05,
+                help="Scales fidelity-kernel branch B before A+B concatenation. 0 disables B; 0.25 makes B a secondary signal while preserving A expectation features unchanged."
+            )
+            st.session_state.b_fusion_weight = float(b_fusion_weight)
 
             st.markdown("#### Step 3: Quantum Backend")
             qkn_backend = st.selectbox(
@@ -1143,7 +1152,8 @@ with tab3:
                 encoder = HybridQSTGNNFeatureEncoder(
                     n_qubits=int(q_qubits),
                     n_landmarks=8,
-                    random_state=42
+                    random_state=42,
+                    b_weight=float(st.session_state.get("b_fusion_weight", 0.25))
                 ).fit(st.session_state.X_seq_train)
                 X_train_q = encoder.transform(st.session_state.X_seq_train, qkn)
                 X_val_q = encoder.transform(st.session_state.X_seq_val, qkn)
@@ -1154,8 +1164,9 @@ with tab3:
                 model_in_channels = encoder.output_channels
                 st.session_state.hybrid_feature_channels = model_in_channels
                 telemetry_status.info(
-                    f" Hybrid A+B fusion complete: {q_qubits} expectation channels + "
-                    f"{len(encoder.landmarks_)} train-only fidelity channels = {model_in_channels} QSTGNN input channels."
+                    f" Weighted hybrid fusion complete: A has priority; {q_qubits} expectation channels "
+                    f"are unchanged and {len(encoder.landmarks_)} B fidelity channels are scaled by "
+                    f"{encoder.b_weight:.2f}. Total QSTGNN input channels: {model_in_channels}."
                 )
             else:
                 X_train_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_train)
@@ -2073,10 +2084,11 @@ with tab7:
     st.markdown("### Unseen-Typhoon Generalization & QKN Benchmark")
     st.caption("Integrated evaluation workspace — no separate Streamlit process required.")
     st.markdown(
-        "Compare Approach A, Approach B, the new feature-fused Hybrid QKN (A+B), and a classical baseline "
-        "using the same storm-level holdout. Hybrid A+B concatenates Pauli-Z expectation features with "
-        "fidelity similarities to training samples before classification. This is a feature-level hybrid, "
-        "not yet a fusion into the full spatiotemporal GNN."
+        "**A-only vs B-only vs A+B comparison.** Approach A uses QKN Pauli-Z expectation features; "
+        "Approach B uses the quantum fidelity kernel; Hybrid A+B combines both. A classical RBF-SVC is "
+        "included as a control. All approaches use the same train/test split and held-out storm groups. "
+        "This tab evaluates the row-wise feature-map/SVC benchmark; the separate Phase 3 training workflow "
+        "evaluates the graph-temporal model. Prioritize Recall, then Precision, F1, and Accuracy."
     )
 
     import json
