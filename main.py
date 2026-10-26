@@ -1180,6 +1180,9 @@ with tab3:
                         outputs_clamped = torch.clamp(outputs, 1e-7, 1.0 - 1e-7)
 
                         v_loss = criterion(outputs_clamped, targets.view_as(outputs_clamped))
+                        # BCELoss(reduction="none") returns one loss per node. Reduce
+                        # element-wise losses to a scalar before accumulating batch loss.
+                        v_loss = v_loss.mean()
                         val_loss += v_loss.item()
 
                         predicted = (outputs_clamped >= 0.5).float()
