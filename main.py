@@ -837,8 +837,7 @@ with tab3:
                     y_p_t = torch.tensor(st.session_state.y_train[:proxy_samples], dtype=torch.float32)
 
                     # Dynamic edge index based on actual node count
-                    edge_idx = torch.tensor([[i, j] for i in range(num_nodes) for j in range(num_nodes) if i != j],
-                                            dtype=torch.long).t()
+                    edge_idx, _ = st.session_state.mapper.export_edge_index()
 
                     model_bo = QuantumSpatiotemporalGNN(in_channels=nq, seq_len=dynamic_seq_len, conv_out=cc,
                                                         gat_heads=gh, lstm_hidden=cl, dropout=dr)
@@ -924,8 +923,7 @@ with tab3:
             val_loader = DataLoader(TensorDataset(X_cal_q, y_cal_t), batch_size=batch_size, shuffle=False)
 
             # Dynamic edge index for main training
-            edge_index = torch.tensor([[i, j] for i in range(num_nodes) for j in range(num_nodes) if i != j],
-                                      dtype=torch.long).t()
+            edge_index, _ = st.session_state.mapper.export_edge_index()
 
             telemetry_status.info(" Initializing PyTorch Graph and Beginning Training...")
 
