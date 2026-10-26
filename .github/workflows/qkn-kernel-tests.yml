@@ -26,6 +26,6 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy==2.2.6 pennylane==0.42.3 scikit-learn==1.7.2 pytest
-      - name: Run quantum fidelity kernel tests
-        run: python -m pytest -q tests/test_qkn_kernel.py
+          python -m pip install numpy==2.2.6 pandas==2.3.3 pennylane==0.42.3 scikit-learn==1.7.2 pytest
+      - name: Run quantum kernel and benchmark tests
+        run: python -m pytest -q tests/test_qkn_kernel.py tests/test_qkn_kernel_experiment.py
