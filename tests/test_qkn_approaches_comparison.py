@@ -34,3 +34,33 @@ def test_approach_comparison_writes_three_models(tmp_path):
     assert output_path.with_suffix(".csv").exists()
     for metrics in result["models"].values():
         assert {"accuracy", "precision", "recall", "f1"} <= set(metrics)
+
+
+def test_group_holdout_keeps_events_disjoint_and_reports_ids(tmp_path):
+    rng = np.random.RandomState(17)
+    rows = []
+    for event_id in range(6):
+        for row_id in range(8):
+            label = int((event_id + row_id) % 2)
+            rows.append({
+                "a": float(rng.normal() + label),
+                "b": float(rng.normal()),
+                "c": float(rng.normal()),
+                "label": label,
+                "storm_id": f"storm-{event_id}",
+            })
+    data_path = tmp_path / "events.csv"
+    output_path = tmp_path / "event_metrics.json"
+    pd.DataFrame(rows).to_csv(data_path, index=False)
+
+    result = run_comparison(
+        data_path, output_path, features=["a", "b", "c"], label="label",
+        n_qubits=3, layers=1, max_samples=0, group_column="storm_id",
+        test_size=0.33, random_state=7,
+    )
+    train_events = set(result["train_event_ids"])
+    test_events = set(result["test_event_ids"])
+    assert train_events
+    assert test_events
+    assert train_events.isdisjoint(test_events)
+    assert train_events | test_events == {f"storm-{i}" for i in range(6)}
