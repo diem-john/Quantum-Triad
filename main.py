@@ -121,13 +121,14 @@ if 'bus_train' not in st.session_state:
 # ])
 
 # --- TAB NAVIGATION ---
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     " Phase 1: Geo-Extraction",
     " Phase 2: Global Optimization",
     " Phase 3: Quantum Training",
     " Phase 4: Uncertainty Calibration",
     " Phase 5: Inference Testing",
-    " Phase 6: CTQW Islanding"
+    " Phase 6: CTQW Islanding",
+    " Evaluation: QKN Benchmark"
 ])
 
 # --- TAB 1: MAPPING & DATA EXTRACTION (GNN COMPATIBLE) ---
@@ -1515,3 +1516,323 @@ with tab6:
 
             except Exception as e:
                 island_plot.error(f" Islanding Error: {e}")
+
+
+# --- INTEGRATED TAB 7: EVENT-LEVEL QKN BENCHMARKING ---
+with tab7:
+    st.markdown("### Unseen-Typhoon Generalization & QKN Benchmark")
+    st.caption("Integrated evaluation workspace — no separate Streamlit process required.")
+    st.markdown(
+        "Compare QKN-style expectation features, the quantum fidelity kernel, and a classical baseline "
+        "using a storm-level holdout. This benchmark complements the trained spatiotemporal GNN; it does "
+        "not claim to be the full GNN architecture."
+    )
+
+    import json
+    import tempfile
+    from pathlib import Path
+    from experiments.compare_qkn_approaches import run_comparison
+    from sklearn.model_selection import GroupShuffleSplit
+
+    eval_col1, eval_col2 = st.columns([1, 2])
+    with eval_col1:
+        eval_source = st.radio(
+            "Evaluation dataset",
+            ["Processed CSV", "Upload CSV"],
+            key="integrated_eval_source"
+        )
+        uploaded_eval = None
+        if eval_source == "Upload CSV":
+            uploaded_eval = st.file_uploader(
+                "Upload event-aware feature CSV",
+                type=["csv"],
+                key="integrated_eval_upload"
+            )
+            eval_path = None
+        else:
+            eval_path = st.text_input(
+                "Processed CSV path",
+                "data/processed/final_quantum_dataset.csv",
+                key="integrated_eval_path"
+            )
+
+        eval_test_size = st.slider(
+            "Held-out storm fraction", 0.10, 0.40, 0.25, 0.05,
+            key="integrated_eval_test_size"
+        )
+        eval_max_samples = st.number_input(
+            "Maximum rows for simulator runtime (0 = all)",
+            min_value=0, max_value=10000, value=250, step=50,
+            key="integrated_eval_max_samples"
+        )
+        eval_layers = st.slider(
+            "Quantum circuit layers", 1, 4, 2,
+            key="integrated_eval_layers"
+        )
+        eval_c = st.select_slider(
+            "SVM regularization C",
+            options=[0.1, 0.5, 1.0, 2.0, 5.0], value=1.0,
+            key="integrated_eval_c"
+        )
+        eval_seed = st.number_input(
+            "Random seed", min_value=0, max_value=99999, value=42,
+            key="integrated_eval_seed"
+        )
+
+    eval_frame = None
+    eval_source_name = ""
+    if eval_source == "Upload CSV":
+        if uploaded_eval is not None:
+            try:
+                eval_frame = pd.read_csv(uploaded_eval)
+                eval_source_name = uploaded_eval.name
+            except Exception as exc:
+                st.error(f"Could not read uploaded CSV: {exc}")
+    else:
+        eval_file = Path(eval_path)
+        if eval_file.exists():
+            try:
+                eval_frame = pd.read_csv(eval_file)
+                eval_source_name = str(eval_file)
+            except Exception as exc:
+                st.error(f"Could not read dataset: {exc}")
+        else:
+            st.info(
+                f"Dataset not found at `{eval_file}`. Complete extraction and export first, "
+                "or choose Upload CSV."
+            )
+
+    if eval_frame is not None:
+        st.write(
+            f"Loaded **{len(eval_frame):,} rows** and **{len(eval_frame.columns)} columns** "
+            f"from `{eval_source_name}`."
+        )
+        id_candidates = [
+            c for c in eval_frame.columns
+            if c.lower() in {"storm_id", "seq_id", "event_id", "typhoon_id", "storm", "event"}
+        ]
+        label_candidates = [
+            c for c in eval_frame.columns
+            if c.lower() in {"failure_label", "label", "target", "y"}
+        ]
+        with eval_col1:
+            group_col = st.selectbox(
+                "Typhoon/event ID",
+                options=list(eval_frame.columns),
+                index=(list(eval_frame.columns).index(id_candidates[0]) if id_candidates else 0),
+                key="integrated_eval_group_col",
+                help="Must identify the complete source typhoon, not a snapshot or bus."
+            )
+            label_col = st.selectbox(
+                "Binary target",
+                options=list(eval_frame.columns),
+                index=(list(eval_frame.columns).index(label_candidates[0]) if label_candidates else 0),
+                key="integrated_eval_label_col"
+            )
+            confirm_event_id = st.checkbox(
+                "Confirm this column identifies the complete source typhoon/event",
+                value=False,
+                key="integrated_eval_confirm_event"
+            )
+
+        group_count = int(eval_frame[group_col].nunique(dropna=True))
+        audit1, audit2, audit3 = st.columns(3)
+        audit1.metric("Rows", f"{len(eval_frame):,}")
+        audit2.metric("Distinct events", group_count)
+        audit3.metric("Target classes", int(eval_frame[label_col].nunique(dropna=True)))
+        if group_col == label_col:
+            st.error("Event ID and target must be different columns.")
+        elif group_count < 3:
+            st.error("At least three distinct storms are required; more are strongly recommended.")
+        else:
+            with st.expander("Event audit", expanded=False):
+                st.dataframe(
+                    eval_frame.groupby(group_col, dropna=False).size()
+                    .rename("rows").reset_index(),
+                    use_container_width=True
+                )
+                st.warning(
+                    "Storm-level separation is essential. Randomly splitting rows from the same "
+                    "typhoon can overstate generalization performance."
+                )
+
+        excluded_cols = {group_col, label_col, "snapshot_id", "Snapshot_ID", "bus_id", "Bus_ID"}
+        numeric_candidates = [
+            c for c in eval_frame.select_dtypes(include=np.number).columns
+            if c not in excluded_cols
+        ]
+        default_features = [c for c in numeric_candidates if c.endswith("(rad)")]
+        if len(default_features) < 2:
+            default_features = numeric_candidates[:3]
+        features = st.multiselect(
+            "Numeric model features (one qubit per selected feature; maximum 8)",
+            numeric_candidates,
+            default=default_features[:3],
+            key="integrated_eval_features"
+        )
+        can_run_eval = (
+            confirm_event_id
+            and group_col != label_col
+            and group_count >= 3
+            and len(features) >= 2
+            and len(features) <= 8
+            and eval_frame[label_col].nunique(dropna=True) == 2
+            and eval_frame[group_col].notna().all()
+        )
+        if len(features) > 8:
+            st.warning("Select no more than eight features for this simulator-based benchmark.")
+
+        if st.button(
+            "Run storm-level QKN benchmark",
+            type="primary",
+            disabled=not can_run_eval,
+            key="integrated_eval_run"
+        ):
+            work = eval_frame.dropna(subset=features + [label_col, group_col]).copy()
+            try:
+                work[label_col] = work[label_col].astype(int)
+            except (ValueError, TypeError):
+                st.error("Target must be binary and encoded as 0/1.")
+                work = None
+            if work is not None and set(work[label_col].unique()) != {0, 1}:
+                st.error("Target must contain both binary labels 0 and 1.")
+                work = None
+
+            if work is not None:
+                if eval_max_samples and len(work) > int(eval_max_samples):
+                    rng = np.random.RandomState(int(eval_seed))
+                    event_ids = work[group_col].drop_duplicates().to_numpy()
+                    rng.shuffle(event_ids)
+                    selected_events, selected_rows = [], 0
+                    for event_id in event_ids:
+                        event_rows = int((work[group_col] == event_id).sum())
+                        if selected_rows and selected_rows + event_rows > int(eval_max_samples):
+                            continue
+                        selected_events.append(event_id)
+                        selected_rows += event_rows
+                        if selected_rows >= int(eval_max_samples):
+                            break
+                    work = work[work[group_col].isin(selected_events)].copy()
+
+                if work[group_col].nunique() < 3 or work[label_col].nunique() < 2:
+                    st.error(
+                        "The selected complete events do not contain enough storms or both labels. "
+                        "Increase the row budget or use a dataset with more events."
+                    )
+                else:
+                    with tempfile.NamedTemporaryFile(
+                        mode="w", suffix=".csv", delete=False,
+                        encoding="utf-8", newline=""
+                    ) as tmp:
+                        temp_path = tmp.name
+                        work.to_csv(tmp, index=False)
+                    try:
+                        with st.spinner("Running quantum feature extraction and held-out storm evaluation..."):
+                            benchmark = run_comparison(
+                                data_path=temp_path,
+                                output_path="outputs/qkn_unseen_typhoon_comparison.json",
+                                features=features,
+                                label=label_col,
+                                test_size=float(eval_test_size),
+                                random_state=int(eval_seed),
+                                n_qubits=len(features),
+                                C=float(eval_c),
+                                group_column=group_col,
+                                max_samples=0,
+                                layers=int(eval_layers)
+                            )
+                        X = work[features].to_numpy(dtype=float)
+                        y = work[label_col].to_numpy()
+                        groups = work[group_col].to_numpy()
+                        train_idx, test_idx = next(
+                            GroupShuffleSplit(
+                                n_splits=1,
+                                test_size=float(eval_test_size),
+                                random_state=int(eval_seed)
+                            ).split(X, y, groups)
+                        )
+                        train_events = sorted(map(str, pd.unique(groups[train_idx])))
+                        test_events = sorted(map(str, pd.unique(groups[test_idx])))
+                        if set(train_events) & set(test_events):
+                            raise RuntimeError("Leakage check failed: event IDs overlap.")
+                        st.session_state["integrated_qkn_result"] = benchmark
+                        st.session_state["integrated_qkn_split"] = {
+                            "train_events": train_events,
+                            "test_events": test_events,
+                            "train_rows": int(len(train_idx)),
+                            "test_rows": int(len(test_idx))
+                        }
+                        st.success("Benchmark complete; train/test event IDs are disjoint.")
+                    except Exception as exc:
+                        st.exception(exc)
+                    finally:
+                        Path(temp_path).unlink(missing_ok=True)
+
+        if "integrated_qkn_result" in st.session_state:
+            benchmark = st.session_state["integrated_qkn_result"]
+            split = st.session_state["integrated_qkn_split"]
+            st.subheader("Held-out storm results")
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Training storms", len(split["train_events"]))
+            r2.metric("Held-out storms", len(split["test_events"]))
+            r3.metric("Held-out rows", split["test_rows"])
+            with st.expander("Show train/test storm IDs"):
+                st.write("**Training:**", ", ".join(split["train_events"]))
+                st.write("**Testing:**", ", ".join(split["test_events"]))
+
+            metric_table = pd.DataFrame([
+                {"model": model_name, **{
+                    key: value for key, value in values.items()
+                    if key != "per_storm_metrics"
+                }}
+                for model_name, values in benchmark["models"].items()
+            ])
+            st.markdown("#### Pooled metrics")
+            st.dataframe(metric_table, use_container_width=True)
+            preferred_metrics = [
+                col for col in ["recall", "precision", "f1", "accuracy"]
+                if col in metric_table.columns
+            ]
+            if preferred_metrics:
+                st.plotly_chart(
+                    px.bar(
+                        metric_table, x="model", y=preferred_metrics,
+                        barmode="group", title="Held-out storm performance"
+                    ),
+                    use_container_width=True
+                )
+
+            storm_rows = []
+            for model_name, values in benchmark["models"].items():
+                for storm_id, scores in values.get("per_storm_metrics", {}).items():
+                    storm_rows.append({"model": model_name, "storm_id": storm_id, **scores})
+            if storm_rows:
+                storm_metrics = pd.DataFrame(storm_rows)
+                st.markdown("#### Per-storm metrics")
+                st.dataframe(storm_metrics, use_container_width=True)
+                st.download_button(
+                    "Download per-storm metrics",
+                    storm_metrics.to_csv(index=False),
+                    file_name="qkn_per_storm_metrics.csv",
+                    mime="text/csv",
+                    key="integrated_eval_download_storm"
+                )
+            st.download_button(
+                "Download benchmark JSON",
+                json.dumps(benchmark, indent=2),
+                file_name="qkn_unseen_typhoon_comparison.json",
+                mime="application/json",
+                key="integrated_eval_download_json"
+            )
+            st.download_button(
+                "Download pooled metrics CSV",
+                metric_table.to_csv(index=False),
+                file_name="qkn_unseen_typhoon_metrics.csv",
+                mime="text/csv",
+                key="integrated_eval_download_metrics"
+            )
+    else:
+        st.info(
+            "Load a processed CSV containing a true storm/event identifier and binary target. "
+            "The updated extraction/export workflow should preserve storm_id, snapshot_id, and bus_id."
+        )
