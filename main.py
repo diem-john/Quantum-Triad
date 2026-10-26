@@ -1867,6 +1867,25 @@ with tab5:
                 "Brier score": "{:.5f}", "Log loss": "{:.5f}"
             }, na_rep="N/A"), use_container_width=True, hide_index=True)
 
+            st.markdown("#### Held-Out Probability Distributions")
+            probability_fig = go.Figure()
+            probability_fig.add_trace(go.Histogram(
+                x=raw_probs_flat, nbinsx=20, histnorm="probability density",
+                opacity=0.55, name="Raw"
+            ))
+            probability_fig.add_trace(go.Histogram(
+                x=probs_flat, nbinsx=20, histnorm="probability density",
+                opacity=0.55, name="Temperature-scaled"
+            ))
+            probability_fig.update_layout(
+                barmode="overlay",
+                title="Predicted Failure-label probability distribution (held-out test)",
+                xaxis_title="Predicted Failure-label probability",
+                yaxis_title="Density",
+                xaxis=dict(range=[0, 1])
+            )
+            st.plotly_chart(probability_fig, use_container_width=True)
+
             reliability_rows = []
             for stream_name, probabilities in [
                 ("Raw", raw_probs_flat),
