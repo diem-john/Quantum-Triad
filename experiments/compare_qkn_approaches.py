@@ -43,6 +43,24 @@ def expectation_features(X: np.ndarray, n_qubits: int, layers: int = 2, seed: in
     return np.asarray([circuit(row, weights) for row in X], dtype=float)
 
 
+def per_group_metrics(y_true, y_pred, groups):
+    """Return pooled-compatible binary metrics for each held-out event."""
+    if groups is None:
+        return {}
+    rows = {}
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    groups = np.asarray(groups)
+    for group in pd.unique(groups):
+        mask = groups == group
+        rows[str(group)] = {
+            **evaluate(y_true[mask], y_pred[mask]),
+            "n_rows": int(mask.sum()),
+            "n_positive": int(np.sum(y_true[mask] == 1)),
+        }
+    return rows
+
+
 def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
                    test_size=0.25, random_state=42, n_qubits=3, C=1.0,
                    group_column=None, max_samples=250, layers=2):
@@ -126,6 +144,7 @@ def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
     A_pred = A_model.predict(A_test)
     results["models"]["approach_a_expectation_features_rbf_svc"] = {
         **evaluate(y_test, A_pred),
+        "per_storm_metrics": per_group_metrics(y_test, A_pred, test_groups),
         "fit_transform_and_predict_seconds": float(time.perf_counter() - start),
         "feature_shape": list(A_train.shape),
     }
@@ -137,6 +156,7 @@ def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
     B_pred = B_model.predict(X_test_q)
     results["models"]["approach_b_fidelity_kernel_svc"] = {
         **evaluate(y_test, B_pred),
+        "per_storm_metrics": per_group_metrics(y_test, B_pred, test_groups),
         "fit_and_predict_seconds": float(time.perf_counter() - start),
         "kernel_train_shape": list(B_model.K_train_.shape),
     }
@@ -148,6 +168,7 @@ def run_comparison(data_path, output_path, features=None, label=DEFAULT_LABEL,
     C_pred = C_model.predict(X_test_c)
     results["models"]["classical_rbf_svc"] = {
         **evaluate(y_test, C_pred),
+        "per_storm_metrics": per_group_metrics(y_test, C_pred, test_groups),
         "fit_and_predict_seconds": float(time.perf_counter() - start),
     }
 
