@@ -64,3 +64,7 @@ def test_group_holdout_keeps_events_disjoint_and_reports_ids(tmp_path):
     assert test_events
     assert train_events.isdisjoint(test_events)
     assert train_events | test_events == {f"storm-{i}" for i in range(6)}
+    for model_metrics in result["models"].values():
+        assert set(model_metrics["per_storm_metrics"]) == test_events
+        for storm_metrics in model_metrics["per_storm_metrics"].values():
+            assert {"accuracy", "precision", "recall", "f1", "n_rows", "n_positive"} <= set(storm_metrics)
