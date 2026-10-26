@@ -1274,7 +1274,11 @@ with tab3:
 # --- TAB 4: PHASE 4 - CONFORMAL CALIBRATION ---
 with tab4:
     st.markdown("###  Phase 4: Conformal Calibration")
-    st.info("Calculate the Non-Conformity Threshold (q_hat) using the calibration dataset. This threshold guarantees our target error rate during out-of-sample inference.")
+    st.info(
+        "Calculate the non-conformity threshold (q_hat) using the dedicated calibration partition. "
+        "Keep this partition representative of the intended deployment distribution: do not downsample "
+        "Safe nodes here just to balance classes, because that changes the calibration distribution."
+    )
 
     if not st.session_state.get('model_trained', False):
         st.warning(" Please train the model in Tab 3 first.")
