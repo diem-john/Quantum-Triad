@@ -731,9 +731,9 @@ with tab2:
 
 # --- TAB 3: PHASE 3 - HYBRID DL TRAINING ---
 with tab3:
-    st.markdown("###  Phase 3: Quantum-LSTM Training & Hyperparameter Tuning")
+    st.markdown("### Phase 3: Hybrid QKN + QSTGNN Training")
     st.info(
-        "Configure the network architecture, embed the classical data into a Hilbert space, and train the PyTorch Graph Network.")
+        "Hybrid mode fuses quantum expectation-value channels (A) with fidelity-to-training-landmark channels (B), then passes the fused node/time features through temporal convolution, physical-grid GAT message passing, BiLSTM, temporal attention, and bus-level failure prediction.")
 
     if not st.session_state.get('data_loaded', False):
         st.warning(" Please complete the Data Extraction and Optimization in prior tabs first.")
