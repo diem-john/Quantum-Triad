@@ -251,6 +251,7 @@ with tab1:
                             # Append the entire 33-bus graph snapshot
                             # Snapshot features shape: (33, 4, 4) -> (Nodes, Time_Steps, Features)
                             grid_snapshots.append({
+                                'storm_id': str(seq_id),
                                 'features': np.array(snapshot_features),
                                 'labels': np.array(snapshot_labels),
                                 'has_stress': snapshot_has_stress
@@ -286,6 +287,7 @@ with tab1:
                     # Y_tensor shape: (Snapshots, 33 Nodes)
                     st.session_state.X_grid_tensor = np.stack(final_snapshots['features'].values)
                     st.session_state.Y_grid_tensor = np.stack(final_snapshots['labels'].values)
+                    st.session_state.storm_ids = final_snapshots['storm_id'].astype(str).to_numpy()
 
                     st.session_state.feature_cols_all = ['Wind_Speed', 'Delta_Wind', 'Distance_to_Eye',
                                                          'Coastal_Exposure']
@@ -497,17 +499,34 @@ with tab1:
                 Y_tensor = st.session_state.Y_grid_tensor  # (Snapshots, 33)
 
                 n_samples = len(X_tensor)
-                train_b, cal_b = int(0.6 * n_samples), int(0.8 * n_samples)
+                storm_ids = np.asarray(st.session_state.storm_ids).astype(str)
+                unique_storms = np.unique(storm_ids)
 
-                # Split data by Full Grid Snapshots
-                st.session_state.X_seq_train = X_tensor[:train_b]
-                st.session_state.y_train = Y_tensor[:train_b]
+                # Hold out complete typhoon events; never split snapshots from one storm across partitions.
+                if len(unique_storms) < 3:
+                    st.error(f"Only {len(unique_storms)} distinct storm event(s) are available. Extract at least 3 storms for independent train, calibration, and test events.")
+                    st.stop()
 
-                st.session_state.X_seq_cal = X_tensor[train_b:cal_b]
-                st.session_state.y_cal = Y_tensor[train_b:cal_b]
+                from sklearn.model_selection import GroupShuffleSplit
+                all_idx = np.arange(n_samples)
+                outer_split = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=42)
+                train_cal_idx, test_idx = next(outer_split.split(all_idx, groups=storm_ids))
+                inner_split = GroupShuffleSplit(n_splits=1, test_size=0.25, random_state=43)
+                train_rel, cal_rel = next(inner_split.split(train_cal_idx, groups=storm_ids[train_cal_idx]))
+                train_idx, cal_idx = train_cal_idx[train_rel], train_cal_idx[cal_rel]
 
-                st.session_state.X_seq_test = X_tensor[cal_b:]
-                st.session_state.y_test = Y_tensor[cal_b:]
+                train_storms, cal_storms, test_storms = set(storm_ids[train_idx]), set(storm_ids[cal_idx]), set(storm_ids[test_idx])
+                if train_storms & cal_storms or train_storms & test_storms or cal_storms & test_storms:
+                    st.error("Event split integrity check failed: storm overlap detected.")
+                    st.stop()
+
+                st.session_state.X_seq_train, st.session_state.y_train = X_tensor[train_idx], Y_tensor[train_idx]
+                st.session_state.X_seq_cal, st.session_state.y_cal = X_tensor[cal_idx], Y_tensor[cal_idx]
+                st.session_state.X_seq_test, st.session_state.y_test = X_tensor[test_idx], Y_tensor[test_idx]
+                st.session_state.train_storm_ids = sorted(train_storms)
+                st.session_state.cal_storm_ids = sorted(cal_storms)
+                st.session_state.test_storm_ids = sorted(test_storms)
+                st.success(f"Event-level split: {len(train_storms)} train storms, {len(cal_storms)} calibration storms, {len(test_storms)} held-out test storms.")
 
                 st.session_state.feature_cols = selected_features
                 st.session_state.data_loaded = True
@@ -522,6 +541,10 @@ with tab1:
                 Y_flat = Y_tensor.reshape(-1)
 
                 df_export = pd.DataFrame(X_flat, columns=[f"{feat} (rad)" for feat in selected_features])
+                # Preserve storm identity for event-level generalization checks.
+                df_export["storm_id"] = np.repeat(st.session_state.storm_ids.astype(str), Y_tensor.shape[1])
+                df_export["snapshot_id"] = np.repeat(np.arange(len(Y_tensor)), Y_tensor.shape[1])
+                df_export["bus_id"] = np.tile(np.arange(1, Y_tensor.shape[1] + 1), len(Y_tensor))
                 df_export["Failure_Label"] = Y_flat
 
                 os.makedirs("data/processed", exist_ok=True)
