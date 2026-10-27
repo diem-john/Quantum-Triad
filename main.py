@@ -1152,21 +1152,64 @@ with tab3:
                     c_conv, c_gat, c_lstm, c_lr, c_drop = 16, 2, 32, 0.005, 0.3
 
             # --- TRAINING BLOCK ---
-            telemetry_status.info(" Extracting quantum representations...")
+            telemetry_status.info("🔬 Extracting quantum representations...")
+            quantum_progress = st.progress(0, text="Initializing quantum feature extraction...")
+            quantum_status = st.empty()
 
             qkn = create_qkn(st.session_state.get("qkn_backend", "pennylane"), n_qubits=q_qubits, layers=q_layers, entangling_type=q_entangle)
             hybrid_mode = st.session_state.get("model_architecture", "Hybrid QKN (A+B) + QSTGNN") == "Hybrid QKN (A+B) + QSTGNN"
+
+            # Track progress across training, validation, and calibration transforms.
+            extraction_sets = [
+                ("Training", st.session_state.X_seq_train),
+                ("Validation", st.session_state.X_seq_val),
+                ("Calibration", st.session_state.X_seq_cal),
+            ]
+            extracted_sets = []
+            for set_index, (set_name, X_set) in enumerate(extraction_sets):
+                set_start = set_index / len(extraction_sets)
+                set_span = 1.0 / len(extraction_sets)
+
+                def update_quantum_progress(fraction, detail="", start=set_start, span=set_span, name=set_name):
+                    overall = min(1.0, max(0.0, start + span * float(fraction)))
+                    quantum_progress.progress(overall, text=f"{name}: {detail or 'Extracting quantum features'}")
+                    quantum_status.caption(f"Quantum representation extraction: {overall:.0%} complete")
+
+                if hybrid_mode:
+                    # The encoder is fitted only on training data, then reused unchanged.
+                    if set_index == 0:
+                        from src.hybrid_qstgnn import HybridQSTGNNFeatureEncoder
+                        encoder = HybridQSTGNNFeatureEncoder(
+                            n_qubits=int(q_qubits),
+                            n_landmarks=8,
+                            random_state=42,
+                            b_weight=float(st.session_state.get("b_fusion_weight", 0.25))
+                        ).fit(st.session_state.X_seq_train)
+                    X_q = encoder.transform(X_set, qkn, progress_callback=update_quantum_progress)
+                else:
+                    X_q = qkn.extract_temporal_quantum_features(
+                        X_set,
+                        progress_callback=lambda fraction, cb=update_quantum_progress: cb(fraction, "Extracting QKN expectation features")
+                    )
+                extracted_sets.append(X_q)
+
+            X_train_q, X_val_q, X_cal_q = extracted_sets
+            quantum_progress.progress(1.0, text="Quantum representations extracted")
+            quantum_status.caption("Training, validation, and calibration representations are ready.")
+
             if hybrid_mode:
-                from src.hybrid_qstgnn import HybridQSTGNNFeatureEncoder
-                encoder = HybridQSTGNNFeatureEncoder(
-                    n_qubits=int(q_qubits),
-                    n_landmarks=8,
-                    random_state=42,
-                    b_weight=float(st.session_state.get("b_fusion_weight", 0.25))
-                ).fit(st.session_state.X_seq_train)
-                X_train_q = encoder.transform(st.session_state.X_seq_train, qkn)
-                X_val_q = encoder.transform(st.session_state.X_seq_val, qkn)
-                X_cal_q = encoder.transform(st.session_state.X_seq_cal, qkn)
+                os.makedirs("data/processed", exist_ok=True)
+                torch.save(encoder.state_dict(), "data/processed/hybrid_qstgnn_encoder.pt")
+                st.session_state.hybrid_encoder_state = encoder.state_dict()
+                model_in_channels = encoder.output_channels
+                st.session_state.hybrid_feature_channels = model_in_channels
+                telemetry_status.info(
+                    f" Weighted hybrid fusion complete: A has priority; {q_qubits} expectation channels "
+                    f"are unchanged and {len(encoder.landmarks_)} B fidelity channels are scaled by "
+                    f"{encoder.b_weight:.2f}. Total QSTGNN input channels: {model_in_channels}."
+                )
+            else:
+                model_in_channels = int(q_qubits)
                 os.makedirs("data/processed", exist_ok=True)
                 torch.save(encoder.state_dict(), "data/processed/hybrid_qstgnn_encoder.pt")
                 st.session_state.hybrid_encoder_state = encoder.state_dict()
