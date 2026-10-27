@@ -1210,21 +1210,6 @@ with tab3:
                 )
             else:
                 model_in_channels = int(q_qubits)
-                os.makedirs("data/processed", exist_ok=True)
-                torch.save(encoder.state_dict(), "data/processed/hybrid_qstgnn_encoder.pt")
-                st.session_state.hybrid_encoder_state = encoder.state_dict()
-                model_in_channels = encoder.output_channels
-                st.session_state.hybrid_feature_channels = model_in_channels
-                telemetry_status.info(
-                    f" Weighted hybrid fusion complete: A has priority; {q_qubits} expectation channels "
-                    f"are unchanged and {len(encoder.landmarks_)} B fidelity channels are scaled by "
-                    f"{encoder.b_weight:.2f}. Total QSTGNN input channels: {model_in_channels}."
-                )
-            else:
-                X_train_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_train)
-                X_val_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_val)
-                X_cal_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_cal)
-                model_in_channels = int(q_qubits)
 
             # Save expectation/fused embeddings for visualization and audit.
             st.session_state.X_train_q_numpy = X_train_q.detach().cpu().numpy()
