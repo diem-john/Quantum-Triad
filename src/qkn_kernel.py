@@ -54,12 +54,13 @@ class QuantumFidelityKernel:
             raise ValueError("Y must have shape (samples, features)")
         K = np.empty((len(X), len(Y)), dtype=np.float64)
         total_rows = max(1, len(X))
+        report_every = max(1, total_rows // 100)
         if same:
             for i in range(len(X)):
                 K[i, i] = 1.0
                 for j in range(i + 1, len(Y)):
                     K[i, j] = K[j, i] = self.evaluate(X[i], X[j])
-                if progress_callback is not None:
+                if progress_callback is not None and ((i + 1) % report_every == 0 or i + 1 == total_rows):
                     progress_callback((i + 1) / total_rows)
         else:
             for i, x in enumerate(X):
