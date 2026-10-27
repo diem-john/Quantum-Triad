@@ -9,8 +9,13 @@ only and must be persisted for validation, testing, and inference.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
@@ -25,6 +30,8 @@ class HybridQSTGNNFeatureEncoder:
     n_landmarks: int = 8
     random_state: int = 42
     b_weight: float = 0.25
+    save_visualizations: bool = True
+    visualization_dir: str = "artifacts/kernel_visualizations"
 
     def __post_init__(self):
         if self.n_qubits < 2:
@@ -95,6 +102,13 @@ class HybridQSTGNNFeatureEncoder:
             progress_callback(0.95, "Quantum fidelity features computed")
         B = similarities.reshape(n_samples, n_nodes, n_steps, len(self.landmarks_))
         B = np.transpose(B, (0, 1, 3, 2)).copy()
+
+        # Save compact diagnostics for both representation branches. The A plot
+        # summarizes one sample/node; the B plot shows the actual fidelity
+        # similarities (subsampled only for display when there are many rows).
+        if self.save_visualizations:
+            self._save_kernel_visualizations(A, similarities, n_samples, n_nodes, n_steps)
+
         B = torch.as_tensor(B, dtype=torch.float32)
         # A is the primary representation. Scale B before concatenation so the
         # fidelity branch contributes a smaller signal to the downstream GNN.
@@ -105,6 +119,43 @@ class HybridQSTGNNFeatureEncoder:
         if progress_callback is not None:
             progress_callback(1.0, "Quantum representation complete")
         return fused
+
+    def _save_kernel_visualizations(
+        self, A: torch.Tensor, similarities: np.ndarray,
+        n_samples: int, n_nodes: int, n_steps: int,
+    ) -> None:
+        """Persist A-branch quantum features and B-branch fidelity similarities."""
+        out_dir = Path(self.visualization_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+        # A branch: expectation-value representation, summarized over nodes.
+        a_view = A[0].mean(dim=0).detach().cpu().numpy()  # (qubits, time)
+        fig, ax = plt.subplots(figsize=(max(7, n_steps * 0.35), 4.5))
+        image = ax.imshow(a_view, aspect="auto", interpolation="nearest", cmap="viridis")
+        ax.set_title("Quantum Feature Extraction (QKN expectation values)")
+        ax.set_xlabel("Time step")
+        ax.set_ylabel("Qubit / feature channel")
+        fig.colorbar(image, ax=ax, label="Expectation value")
+        fig.tight_layout()
+        fig.savefig(out_dir / f"quantum_features_{stamp}.png", dpi=180)
+        plt.close(fig)
+
+        # B branch: fidelity-to-training-landmarks matrix. Limit plotted rows
+        # to 256 for readable files; all rows are still used in the model.
+        display_rows = min(len(similarities), 256)
+        row_ids = np.linspace(0, len(similarities) - 1, display_rows, dtype=int)
+        kernel_view = similarities[row_ids]
+        fig, ax = plt.subplots(figsize=(max(7, len(self.landmarks_) * 0.6), 5))
+        image = ax.imshow(kernel_view, aspect="auto", interpolation="nearest",
+                          vmin=0.0, vmax=1.0, cmap="magma")
+        ax.set_title("Quantum Fidelity Kernel (input rows vs training landmarks)")
+        ax.set_xlabel("Training landmark")
+        ax.set_ylabel(f"Input row (up to {display_rows} displayed)")
+        fig.colorbar(image, ax=ax, label="Fidelity similarity")
+        fig.tight_layout()
+        fig.savefig(out_dir / f"quantum_fidelity_kernel_{stamp}.png", dpi=180)
+        plt.close(fig)
 
     @property
     def output_channels(self) -> int:
