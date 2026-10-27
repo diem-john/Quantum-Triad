@@ -184,7 +184,7 @@ def render_label_distribution_audit(label_sets, title="Label Distribution Audit"
     """Display and persist class counts for the supplied partitions."""
     report = label_distribution_frame(label_sets)
     st.markdown(f"#### {title}")
-    st.dataframe(report, use_container_width=True, hide_index=True)
+    st.dataframe(report, width="stretch", hide_index=True)
     os.makedirs("data/processed", exist_ok=True)
     report.to_csv("data/processed/label_distribution_audit.csv", index=False)
     st.download_button(
@@ -308,7 +308,7 @@ with tab1:
     col1, col2 = st.columns([2, 1])
     with col1:
         st.plotly_chart(plot_interactive_map(st.session_state.mapper, "Enhanced IEEE 33-Bus System in Chiayi"),
-                        use_container_width=True)
+                        width="stretch")
     with col2:
         st.info(
             "**Geospatial & Temporal Setup**\n\nThe 33-bus system is mapped to Chiayi. The extraction pipeline now builds full **Grid Snapshots** required for Graph Neural Network message passing.")
@@ -455,7 +455,7 @@ with tab1:
                         )
                         st.dataframe(
                             label_distribution_frame({"All extracted bus labels": np.concatenate(df_snapshots["labels"].to_list())}),
-                            use_container_width=True,
+                            width="stretch",
                             hide_index=True,
                         )
                         st.stop()
@@ -585,7 +585,7 @@ with tab1:
             plot_bgcolor='white'
         )
 
-        st.plotly_chart(fig_viewer, use_container_width=True)
+        st.plotly_chart(fig_viewer, width="stretch")
     # --- META-HEURISTIC FEATURE SELECTION (CGWO) ---
     if st.session_state.get('coresets_generated', False):
         st.divider()
@@ -844,7 +844,7 @@ with tab1:
                                                         line_color='red'))
                     fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[-np.pi, np.pi])),
                                             title="Average Node Phase Profiles")
-                    st.plotly_chart(fig_radar, use_container_width=True)
+                    st.plotly_chart(fig_radar, width="stretch")
 
                 with v_col2:
                     if len(selected_features) > 2:
@@ -865,7 +865,7 @@ with tab1:
                                              title=title_scatter, color_discrete_map={'Safe': 'blue', 'Failure': 'red'},
                                              opacity=0.7)
                     fig_scatter.update_traces(marker=dict(size=8, line=dict(width=1, color='DarkSlateGrey')))
-                    st.plotly_chart(fig_scatter, use_container_width=True)
+                    st.plotly_chart(fig_scatter, width="stretch")
 
                 st.success("Graph Matrices Prepared! You can now proceed to Phase 2 (Bayesian Optimization).")
 
@@ -885,7 +885,7 @@ with tab2:
             n_trials = st.slider("Optimization Trials:", 5, 50, 15)
             proxy_samples = st.slider("Proxy Subset Size:", 16, 128, 32)
 
-            run_bo_btn = st.button("Initialize Bayesian Search", type="primary", use_container_width=True)
+            run_bo_btn = st.button("Initialize Bayesian Search", type="primary", width="stretch")
 
         with col2:
             st.markdown("#### Bayesian Telemetry")
@@ -1063,7 +1063,7 @@ with tab3:
             epochs = st.number_input("Training Epochs:", min_value=5, max_value=200, value=25, step=5)
             batch_size = st.selectbox("Batch Size:", [8, 16, 32], index=1)
 
-            train_btn = st.button("Initialize & Begin Training Sequence", type="primary", use_container_width=True)
+            train_btn = st.button("Initialize & Begin Training Sequence", type="primary", width="stretch")
 
         with col2:
             st.markdown("#### Real-Time Telemetry")
@@ -1377,8 +1377,8 @@ with tab3:
             )
 
             vcol1, vcol2 = st.columns(2)
-            vcol1.plotly_chart(fig_emb, use_container_width=True)
-            vcol2.plotly_chart(fig_kernel, use_container_width=True)
+            vcol1.plotly_chart(fig_emb, width="stretch")
+            vcol2.plotly_chart(fig_kernel, width="stretch")
 
             st.caption(
                 "*Left: The raw amplitude projections of features onto the qubits. Right: The dot-product similarity between every node pair within the quantum feature space.*")
@@ -1402,7 +1402,7 @@ with tab4:
             alpha = st.slider("Target Error Rate (α):", min_value=0.01, max_value=0.20, value=0.10, step=0.01,
                               help="An α of 0.10 guarantees that the true grid state will be contained in the prediction set 90% of the time.")
 
-            calibrate_btn = st.button("Calculate Threshold & Calibrate", type="primary", use_container_width=True)
+            calibrate_btn = st.button("Calculate Threshold & Calibrate", type="primary", width="stretch")
 
             st.markdown("---")
             st.markdown("#### The Math")
@@ -1461,7 +1461,7 @@ with tab4:
                                         color_discrete_sequence=['#4C78A8'])
                 fig_dist.add_vline(x=q_hat, line_dash="dash", line_color="red",
                                    annotation_text=f"q_hat = {q_hat:.3f}")
-                dist_chart.plotly_chart(fig_dist, use_container_width=True)
+                dist_chart.plotly_chart(fig_dist, width="stretch")
 
                 cp_status.success(" Calibration Complete! Threshold locked. Proceed to Phase 5 for Out-of-Sample Inference.")
 
@@ -1656,7 +1656,7 @@ with tab5:
                 st.dataframe(pd.DataFrame([
                     {"Probability stream": "Raw", "Selected threshold": raw_threshold, **raw_val_scores},
                     {"Probability stream": "Temperature-scaled", "Selected threshold": calibrated_threshold, **calibrated_val_scores},
-                ]), use_container_width=True, hide_index=True)
+                ]), width="stretch", hide_index=True)
                 
                 # Apply QCP Sets
                 q_hat = st.session_state.q_hat
@@ -1776,7 +1776,7 @@ with tab5:
                         "Recall": "{:.2%}", "Precision": "{:.2%}",
                         "F1": "{:.2%}", "Accuracy": "{:.2%}",
                     }),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
                 st.download_button(
@@ -1810,7 +1810,7 @@ with tab5:
                     color_discrete_map={"Certain (Sure)": "#2ecc71", "Ambiguous (Uncertain)": "#f39c12"}
                 )
                 fig_pie.update_layout(margin=dict(t=10, b=10, l=10, r=10))
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, width="stretch")
 
             with col_stats:
                 st.write("**Model Autonomy vs. Intervention**")
@@ -1838,7 +1838,7 @@ with tab5:
 
             st.dataframe(
                 comparison_df.style.format("{:.2%}"),
-                use_container_width=True
+                width="stretch"
             )
 
 
@@ -1875,7 +1875,7 @@ with tab5:
                 get_class_distribution(y_qcp, "QCP Fail-Safe"),
             ])
 
-            st.dataframe(distribution_df, use_container_width=True)
+            st.dataframe(distribution_df, width="stretch")
 
             # Verify that the number of predictions matches the number of labels.
             if not (
@@ -1922,7 +1922,7 @@ with tab5:
                     "Raw Model",
                     "Blues"
                 ),
-                use_container_width=True
+                width="stretch"
             )
 
             c2.plotly_chart(
@@ -1931,7 +1931,7 @@ with tab5:
                     "Calibrated Model",
                     "Greens"
                 ),
-                use_container_width=True
+                width="stretch"
             )
 
             c3.plotly_chart(
@@ -1940,7 +1940,7 @@ with tab5:
                     "QCP Fail-Safe Model",
                     "Reds"
                 ),
-                use_container_width=True
+                width="stretch"
             )
 
             # --- ALERT LEDGER ---
@@ -1952,7 +1952,7 @@ with tab5:
                 lambda v: 'background-color: #ff9999;' if v == 'High' else
                 ('background-color: #ffe066;' if v == 'Uncertain' else
                  'background-color: #b3ffb3;'),
-                subset=['Alert_Level']), use_container_width=True)
+                subset=['Alert_Level']), width="stretch")
 
 
             if st.button("Commit Alerts to CTQW Islanding Engine", type="primary"):
@@ -2015,14 +2015,14 @@ with tab6:
             fig_hist.add_vline(x=fail_threshold, line_dash="dash", line_color="red", annotation_text="Fracture Cutoff")
             fig_hist.update_layout(height=200, margin=dict(t=10, b=0, l=0, r=0), xaxis_title=None,
                                    yaxis_title="Bus Count")
-            st.plotly_chart(fig_hist, use_container_width=True)
+            st.plotly_chart(fig_hist, width="stretch")
 
             st.markdown("#### Quantum Propagation Settings")
             time_evolution = st.slider("Quantum Evolution Time ($t$):", min_value=0.1, max_value=5.0, value=1.0,
                                        step=0.1,
                                        help="Controls how far the quantum cascade wave propagates during Buffer Zone analysis.")
 
-            run_islanding_btn = st.button("Simulate Fracture & Map Islands", type="primary", use_container_width=True)
+            run_islanding_btn = st.button("Simulate Fracture & Map Islands", type="primary", width="stretch")
 
         with col2:
             st.markdown("#### Post-Disaster Microgrid Topology")
@@ -2095,7 +2095,7 @@ with tab6:
                         plot_bgcolor='white'
                     )
 
-                    island_plot.plotly_chart(fig, use_container_width=True)
+                    island_plot.plotly_chart(fig, width="stretch")
                     metrics_display.success(
                         f"**Disaster Summary:** {len(failed_nodes)} buses failed. The grid fractured into **{len(islands)}** autonomous microgrid(s).")
 
@@ -2157,7 +2157,7 @@ with tab6:
                                 xaxis_title="Microgrid Nodes", yaxis_title="Probability Density",
                                 template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
                             )
-                            st.plotly_chart(fig_ctqw, use_container_width=True)
+                            st.plotly_chart(fig_ctqw, width="stretch")
 
             except Exception as e:
                 island_plot.error(f" Islanding Error: {e}")
@@ -2301,7 +2301,7 @@ with tab7:
                 st.dataframe(
                     eval_frame.groupby(group_col, dropna=False).size()
                     .rename("rows").reset_index(),
-                    use_container_width=True
+                    width="stretch"
                 )
                 st.warning(
                     "Storm-level separation is essential. Randomly splitting rows from the same "
@@ -2441,7 +2441,7 @@ with tab7:
                 for model_name, values in benchmark["models"].items()
             ])
             st.markdown("#### Pooled metrics")
-            st.dataframe(metric_table, use_container_width=True)
+            st.dataframe(metric_table, width="stretch")
             preferred_metrics = [
                 col for col in ["recall", "precision", "f1", "accuracy"]
                 if col in metric_table.columns
@@ -2452,7 +2452,7 @@ with tab7:
                         metric_table, x="model", y=preferred_metrics,
                         barmode="group", title="Held-out storm performance"
                     ),
-                    use_container_width=True
+                    width="stretch"
                 )
 
             storm_rows = []
@@ -2462,7 +2462,7 @@ with tab7:
             if storm_rows:
                 storm_metrics = pd.DataFrame(storm_rows)
                 st.markdown("#### Per-storm metrics")
-                st.dataframe(storm_metrics, use_container_width=True)
+                st.dataframe(storm_metrics, width="stretch")
                 st.download_button(
                     "Download per-storm metrics",
                     storm_metrics.to_csv(index=False),
