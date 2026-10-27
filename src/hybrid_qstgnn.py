@@ -58,12 +58,16 @@ class HybridQSTGNNFeatureEncoder:
         self.landmarks_ = rows[chosen].copy()
         return self
 
-    def transform(self, X: Any, qkn_backend: Any) -> torch.Tensor:
+    def transform(self, X: Any, qkn_backend: Any, progress_callback=None) -> torch.Tensor:
         if self.landmarks_ is None:
             raise RuntimeError("Call fit(X_train) before transform.")
         arr = self._validate_tensor(X)
         # A branch: existing QKN expectation-value feature extractor.
-        A = qkn_backend.extract_temporal_quantum_features(arr)
+        def report(fraction):
+            if progress_callback is not None:
+                progress_callback(0.70 * float(fraction), "Extracting QKN expectation features")
+
+        A = qkn_backend.extract_temporal_quantum_features(arr, progress_callback=report if progress_callback is not None else None)
         if not isinstance(A, torch.Tensor):
             A = torch.as_tensor(A, dtype=torch.float32)
         A = A.detach().cpu().float()
@@ -76,6 +80,8 @@ class HybridQSTGNNFeatureEncoder:
         n_samples, n_nodes, n_steps, n_features = arr.shape
         rows = arr.reshape(-1, n_features)
         similarities = self.kernel.matrix(rows, self.landmarks_)
+        if progress_callback is not None:
+            progress_callback(0.95, "Computing quantum fidelity features")
         B = similarities.reshape(n_samples, n_nodes, n_steps, len(self.landmarks_))
         B = np.transpose(B, (0, 1, 3, 2)).copy()
         B = torch.as_tensor(B, dtype=torch.float32)
@@ -84,7 +90,10 @@ class HybridQSTGNNFeatureEncoder:
         B = B * float(self.b_weight)
 
         # Feature fusion occurs before temporal and graph message passing.
-        return torch.cat([A, B], dim=2).contiguous()
+        fused = torch.cat([A, B], dim=2).contiguous()
+        if progress_callback is not None:
+            progress_callback(1.0, "Quantum representation complete")
+        return fused
 
     @property
     def output_channels(self) -> int:
