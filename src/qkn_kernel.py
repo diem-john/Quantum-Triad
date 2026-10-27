@@ -43,7 +43,8 @@ class QuantumFidelityKernel:
         overlap = np.vdot(self.state(x), self.state(y))
         return float(np.clip(abs(overlap) ** 2, 0.0, 1.0))
 
-    def matrix(self, X: Any, Y: Any = None) -> np.ndarray:
+    def matrix(self, X: Any, Y: Any = None, progress_callback=None) -> np.ndarray:
+        """Compute the fidelity matrix, optionally reporting row-wise progress."""
         X = np.asarray(X, dtype=np.float64)
         if X.ndim != 2:
             raise ValueError("X must have shape (samples, features)")
@@ -52,15 +53,20 @@ class QuantumFidelityKernel:
         if Y.ndim != 2:
             raise ValueError("Y must have shape (samples, features)")
         K = np.empty((len(X), len(Y)), dtype=np.float64)
+        total_rows = max(1, len(X))
         if same:
             for i in range(len(X)):
                 K[i, i] = 1.0
                 for j in range(i + 1, len(Y)):
                     K[i, j] = K[j, i] = self.evaluate(X[i], X[j])
+                if progress_callback is not None:
+                    progress_callback((i + 1) / total_rows)
         else:
             for i, x in enumerate(X):
                 for j, y in enumerate(Y):
                     K[i, j] = self.evaluate(x, y)
+                if progress_callback is not None:
+                    progress_callback((i + 1) / total_rows)
         return K
 
 class QuantumKernelSVC:
