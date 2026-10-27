@@ -66,7 +66,7 @@ class QuantumFidelityKernel:
             for i, x in enumerate(X):
                 for j, y in enumerate(Y):
                     K[i, j] = self.evaluate(x, y)
-                if progress_callback is not None:
+                if progress_callback is not None and ((i + 1) % report_every == 0 or i + 1 == total_rows):
                     progress_callback((i + 1) / total_rows)
         return K
 
