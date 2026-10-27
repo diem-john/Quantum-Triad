@@ -770,45 +770,6 @@ with tab1:
                 }, title="Full and Partition Label Distributions")
                 st.session_state.label_distribution_report = distribution_report.to_dict("records")
 
-                # Per-storm prevalence audit helps explain why event-level partitions
-                # can have different class proportions without leaking storm snapshots.
-                per_storm_rows = []
-                partition_lookup = {
-                    "Training": (train_idx, train_storms),
-                    "Validation": (val_idx, val_storms),
-                    "Calibration": (cal_idx, cal_storms),
-                    "Held-out testing": (test_idx, test_storms),
-                }
-                for partition_name, (sample_indices, storm_set) in partition_lookup.items():
-                    for storm_id in sorted(storm_set):
-                        storm_sample_mask = storm_ids[sample_indices] == str(storm_id)
-                        storm_labels = Y_tensor[sample_indices][storm_sample_mask].reshape(-1)
-                        total_nodes = int(storm_labels.size)
-                        failures = int(np.sum(storm_labels == 1))
-                        per_storm_rows.append({
-                            "Partition": partition_name,
-                            "Storm ID": str(storm_id),
-                            "Snapshots": int(np.sum(storm_sample_mask)),
-                            "Bus labels": total_nodes,
-                            "Failure labels": failures,
-                            "Failure (%)": round(100.0 * failures / total_nodes, 2) if total_nodes else 0.0,
-                        })
-                per_storm_report = pd.DataFrame(per_storm_rows)
-                st.markdown("#### Per-Storm Failure Prevalence Audit")
-                st.caption(
-                    "Use this table to identify whether a few high-risk storms dominate the positive labels. "
-                    "All snapshots from a storm remain in one partition."
-                )
-                st.dataframe(per_storm_report, use_container_width=True, hide_index=True)
-                st.download_button(
-                    "Download Per-Storm Prevalence Audit (CSV)",
-                    data=per_storm_report.to_csv(index=False),
-                    file_name="per_storm_prevalence_audit.csv",
-                    mime="text/csv",
-                    key="per_storm_prevalence_audit_download",
-                )
-                st.session_state.per_storm_prevalence_report = per_storm_report.to_dict("records")
-
                 st.warning(
                     "Check the distribution table above. If any partition lacks either class, do not interpret "
                     "binary Recall/Precision/F1 for that partition as a complete evaluation. Increase the number "
@@ -1514,19 +1475,6 @@ with tab5:
             f"Evaluating model reliability on unseen test data using the established conformal threshold $q_{{\hat{{h}}}}$ = **{st.session_state.q_hat:.4f}**.")
 
         # 1. EXECUTE INFERENCE
-        threshold_policy = st.selectbox(
-            "Validation threshold policy",
-            ["Maximize F2 (recall-weighted)", "Maximize precision subject to minimum recall"],
-            key="phase5_threshold_policy",
-            help="Choose the policy using validation labels only. The held-out test labels are never used to choose a threshold."
-        )
-        min_recall_target = st.slider(
-            "Minimum validation recall constraint",
-            min_value=0.50, max_value=0.95, value=0.80, step=0.05,
-            key="phase5_min_recall_target",
-            help="Used only by the constrained-precision policy. If no threshold meets this target, the app reports that and falls back to the best-recall validation threshold."
-        )
-
         if st.button("Execute Inference & Generate Metrics", type="primary"):
             import torch
             import numpy as np
@@ -1633,11 +1581,11 @@ with tab5:
                 y_val_flat = np.asarray(st.session_state.y_val).reshape(-1).astype(int)
                 y_test_flat = np.asarray(st.session_state.y_test).reshape(-1).astype(int)
 
-                def select_validation_threshold(y_true, probabilities, policy, min_recall=0.80, beta=2.0):
-                    """Choose a binary threshold using validation labels only."""
+                def select_validation_threshold(y_true, probabilities, beta=2.0):
+                    """Maximize validation F-beta; break ties by precision, then threshold."""
                     from sklearn.metrics import precision_score, recall_score, fbeta_score
                     y_true = np.asarray(y_true).astype(int).reshape(-1)
-                    probabilities = np.asarray(probabilities, dtype=float).reshape(-1)
+                    probabilities = np.asarray(probabilities).reshape(-1)
                     if len(y_true) != len(probabilities):
                         raise ValueError(
                             f"Validation labels/probabilities mismatch: {len(y_true)} vs {len(probabilities)}."
@@ -1647,46 +1595,21 @@ with tab5:
                             "Validation threshold tuning requires both Safe and Failure labels. "
                             "Review the storm-level partition before evaluating."
                         )
-                    if not np.isfinite(probabilities).all():
-                        raise ValueError("Validation probabilities contain non-finite values.")
                     candidates = np.unique(np.concatenate(([0.0, 0.5, 1.0], probabilities)))
-                    scored = []
+                    best = None
                     for threshold in candidates:
                         pred = (probabilities >= threshold).astype(int)
                         precision = precision_score(y_true, pred, zero_division=0)
                         recall = recall_score(y_true, pred, zero_division=0)
                         f_beta = fbeta_score(y_true, pred, beta=beta, zero_division=0)
-                        scored.append({
-                            "threshold": float(threshold), "F2": float(f_beta),
-                            "Precision": float(precision), "Recall": float(recall)
-                        })
-                    if policy == "Maximize precision subject to minimum recall":
-                        eligible = [row for row in scored if row["Recall"] >= min_recall]
-                        if eligible:
-                            best = max(eligible, key=lambda row: (
-                                row["Precision"], row["Recall"], row["threshold"]
-                            ))
-                            best["Policy outcome"] = f"Met recall >= {min_recall:.0%}"
-                        else:
-                            best = max(scored, key=lambda row: (
-                                row["Recall"], row["Precision"], row["threshold"]
-                            ))
-                            best["Policy outcome"] = (
-                                f"No threshold met recall >= {min_recall:.0%}; "
-                                "selected highest-recall validation threshold"
-                            )
-                    else:
-                        best = max(scored, key=lambda row: (
-                            row["F2"], row["Precision"], row["threshold"]
-                        ))
-                        best["Policy outcome"] = "Maximized validation F2"
-                    return best["threshold"], best
+                        candidate = (f_beta, precision, float(threshold), recall)
+                        if best is None or candidate[:3] > best[:3]:
+                            best = candidate
+                    return best[2], {"F2": best[0], "Precision": best[1], "Recall": best[3]}
 
-                raw_threshold, raw_val_scores = select_validation_threshold(
-                    y_val_flat, raw_val_flat, threshold_policy, min_recall_target
-                )
+                raw_threshold, raw_val_scores = select_validation_threshold(y_val_flat, raw_val_flat)
                 calibrated_threshold, calibrated_val_scores = select_validation_threshold(
-                    y_val_flat, calibrated_val_flat, threshold_policy, min_recall_target
+                    y_val_flat, calibrated_val_flat
                 )
                 st.session_state.raw_decision_threshold = float(raw_threshold)
                 st.session_state.calibrated_decision_threshold = float(calibrated_threshold)
@@ -1699,9 +1622,8 @@ with tab5:
 
                 st.markdown("#### Validation-Only Decision Threshold Selection")
                 st.caption(
-                    f"Policy: {threshold_policy}. "
-                    + (f"Minimum validation recall target: {min_recall_target:.0%}. " if threshold_policy == "Maximize precision subject to minimum recall" else "")
-                    + "Thresholds are selected from validation predictions only; held-out test labels are not used for threshold selection."
+                    "Thresholds maximize validation F2 (recall-weighted), with precision and then threshold "
+                    "used to break ties. Test labels are not used for threshold selection."
                 )
                 st.dataframe(pd.DataFrame([
                     {"Probability stream": "Raw", "Selected threshold": raw_threshold, **raw_val_scores},
@@ -1808,138 +1730,6 @@ with tab5:
                 "Threshold": float(st.session_state.get("calibrated_decision_threshold", 0.5)),
             }
             st.session_state.architecture_benchmark = architecture_benchmark
-
-            st.markdown("#### Held-Out Test Metrics")
-            st.caption(
-                "Raw and temperature-scaled binary predictions use thresholds selected on validation data only. "
-                "QCP fail-safe is a separate uncertainty-driven decision rule and does not use these thresholds."
-            )
-            metric_rows = [
-                {"Method": "Raw model", **m_raw, "Decision threshold": float(st.session_state.get("raw_decision_threshold", 0.5))},
-                {"Method": "Temperature-scaled model", **m_calibrated, "Decision threshold": float(st.session_state.get("calibrated_decision_threshold", 0.5))},
-                {"Method": "QCP fail-safe", **m_qcp, "Decision threshold": np.nan},
-            ]
-            st.dataframe(
-                pd.DataFrame(metric_rows).rename(columns={
-                    "Acc": "Accuracy", "Pre": "Precision", "Rec": "Recall", "F1": "F1"
-                }).style.format({
-                    "Accuracy": "{:.2%}", "Precision": "{:.2%}",
-                    "Recall": "{:.2%}", "F1": "{:.2%}",
-                    "Decision threshold": "{:.4f}",
-                }, na_rep="N/A"),
-                use_container_width=True,
-                hide_index=True,
-            )
-            # Probability quality is assessed separately from thresholded classification.
-            # Test diagnostics are reporting-only and never feed back into threshold selection.
-            from sklearn.metrics import brier_score_loss, log_loss
-            from sklearn.calibration import calibration_curve
-
-            def probability_quality(y_true, probabilities):
-                y_true = np.asarray(y_true, dtype=int).reshape(-1)
-                probabilities = np.clip(np.asarray(probabilities, dtype=float).reshape(-1), 1e-7, 1 - 1e-7)
-                if len(y_true) != len(probabilities) or len(np.unique(y_true)) < 2:
-                    return {"Brier score": np.nan, "Log loss": np.nan}
-                return {
-                    "Brier score": float(brier_score_loss(y_true, probabilities)),
-                    "Log loss": float(log_loss(y_true, probabilities, labels=[0, 1]))
-                }
-
-            quality_rows = []
-            for split_name, split_y, raw_p, calibrated_p in [
-                ("Validation", y_val_flat, raw_val_flat, calibrated_val_flat),
-                ("Held-out test (reporting only)", y_test_flat, raw_probs_flat, probs_flat),
-            ]:
-                quality_rows.append({
-                    "Split": split_name, "Probability stream": "Raw",
-                    **probability_quality(split_y, raw_p)
-                })
-                quality_rows.append({
-                    "Split": split_name, "Probability stream": "Temperature-scaled",
-                    **probability_quality(split_y, calibrated_p)
-                })
-            st.markdown("#### Probability Quality and Calibration Diagnostics")
-            st.caption(
-                "Lower Brier score and log loss are better. Test-set values are descriptive only; "
-                "do not use them to choose temperature, thresholds, model settings, or features."
-            )
-            st.dataframe(pd.DataFrame(quality_rows).style.format({
-                "Brier score": "{:.5f}", "Log loss": "{:.5f}"
-            }, na_rep="N/A"), use_container_width=True, hide_index=True)
-
-            st.markdown("#### Held-Out Probability Distributions")
-            probability_fig = go.Figure()
-            probability_fig.add_trace(go.Histogram(
-                x=raw_probs_flat, nbinsx=20, histnorm="probability density",
-                opacity=0.55, name="Raw"
-            ))
-            probability_fig.add_trace(go.Histogram(
-                x=probs_flat, nbinsx=20, histnorm="probability density",
-                opacity=0.55, name="Temperature-scaled"
-            ))
-            probability_fig.update_layout(
-                barmode="overlay",
-                title="Predicted Failure-label probability distribution (held-out test)",
-                xaxis_title="Predicted Failure-label probability",
-                yaxis_title="Density",
-                xaxis=dict(range=[0, 1])
-            )
-            st.plotly_chart(probability_fig, use_container_width=True)
-
-            reliability_rows = []
-            for stream_name, probabilities in [
-                ("Raw", raw_probs_flat),
-                ("Temperature-scaled", probs_flat),
-            ]:
-                frac_positive, mean_predicted = calibration_curve(
-                    y_test_flat, np.clip(probabilities, 1e-7, 1 - 1e-7),
-                    n_bins=8, strategy="quantile"
-                )
-                for bin_id, (mean_p, observed_rate) in enumerate(zip(mean_predicted, frac_positive), start=1):
-                    reliability_rows.append({
-                        "Probability stream": stream_name, "Bin": bin_id,
-                        "Mean predicted failure probability": float(mean_p),
-                        "Observed positive fraction": float(observed_rate)
-                    })
-            reliability_df = pd.DataFrame(reliability_rows)
-            if not reliability_df.empty:
-                reliability_fig = go.Figure()
-                reliability_fig.add_trace(go.Scatter(
-                    x=[0, 1], y=[0, 1], mode="lines", name="Perfect reliability"
-                ))
-                for stream_name in ["Raw", "Temperature-scaled"]:
-                    subset = reliability_df[reliability_df["Probability stream"] == stream_name]
-                    reliability_fig.add_trace(go.Scatter(
-                        x=subset["Mean predicted failure probability"],
-                        y=subset["Observed positive fraction"], mode="lines+markers",
-                        name=stream_name
-                    ))
-                reliability_fig.update_layout(
-                    title="Held-out test reliability diagram (descriptive only)",
-                    xaxis_title="Mean predicted failure probability",
-                    yaxis_title="Observed Failure-label fraction",
-                    xaxis=dict(range=[0, 1]), yaxis=dict(range=[0, 1])
-                )
-                st.plotly_chart(reliability_fig, use_container_width=True)
-                st.dataframe(reliability_df, use_container_width=True, hide_index=True)
-                st.download_button(
-                    "Download reliability-bin diagnostics",
-                    reliability_df.to_csv(index=False),
-                    file_name="probability_reliability_bins.csv",
-                    mime="text/csv",
-                    key="phase5_reliability_download"
-                )
-
-            st.caption(
-                "Interpretation note: Failure_Label is a synthetic grid-vulnerability proxy derived from the configured risk rule, "
-                "not an observed record of real grid failures. Metrics measure agreement with that proxy."
-            )
-
-            st.caption(
-                f"Test set: {len(y_test)} bus labels; "
-                f"{int(np.sum(np.asarray(y_test).reshape(-1) == 1))} actual Failure labels. "
-                "Thresholds were fixed before calculating these test metrics."
-            )
 
             st.markdown("#### A-only vs A+B Architecture Benchmark")
             st.caption(
