@@ -79,9 +79,20 @@ class HybridQSTGNNFeatureEncoder:
         # landmark bank. Result shape (samples, nodes, landmarks, time).
         n_samples, n_nodes, n_steps, n_features = arr.shape
         rows = arr.reshape(-1, n_features)
-        similarities = self.kernel.matrix(rows, self.landmarks_)
+        def report_fidelity_progress(fraction):
+            if progress_callback is not None:
+                progress_callback(
+                    0.70 + 0.25 * float(fraction),
+                    f"Computing quantum fidelity features ({float(fraction):.0%})"
+                )
+
+        similarities = self.kernel.matrix(
+            rows,
+            self.landmarks_,
+            progress_callback=report_fidelity_progress if progress_callback is not None else None,
+        )
         if progress_callback is not None:
-            progress_callback(0.95, "Computing quantum fidelity features")
+            progress_callback(0.95, "Quantum fidelity features computed")
         B = similarities.reshape(n_samples, n_nodes, n_steps, len(self.landmarks_))
         B = np.transpose(B, (0, 1, 3, 2)).copy()
         B = torch.as_tensor(B, dtype=torch.float32)
