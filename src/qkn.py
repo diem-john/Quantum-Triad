@@ -152,30 +152,37 @@ class QuantumKernelNetwork(QKNBackend):
 
         self.qnode = quantum_feature_map
 
-    def extract_temporal_quantum_features(self, X_seq):
+    def extract_temporal_quantum_features(self, X_seq, progress_callback=None):
         """
-        Handles the 4D Grid Snapshots: (Batch, Nodes, Time_Steps, Features)
-        Output: (Batch, Nodes, Qubits, Time_Steps) -> Formatted for Conv1D ingestion
+        Extract quantum features, optionally reporting fractional progress via
+        progress_callback(completed_fraction). The callback does not affect outputs.
         """
-        # Handle 4D Tensor (New Grid-Centric Architecture)
         if len(X_seq.shape) == 4:
             n_samples, n_nodes, n_steps, n_features = X_seq.shape
             extracted = np.zeros((n_samples, n_nodes, self.n_qubits, n_steps))
-
+            total = n_samples * n_nodes * n_steps
+            completed = 0
             for i in range(n_samples):
                 for n in range(n_nodes):
                     for t in range(n_steps):
                         exp_vals = self.qnode(X_seq[i, n, t, :], self.weights)
                         extracted[i, n, :, t] = exp_vals
-
+                        completed += 1
+                        if progress_callback is not None and (completed == total or completed % max(1, total // 100) == 0):
+                            progress_callback(completed / total)
             return torch.tensor(extracted, dtype=torch.float32)
 
-        # Handle 3D Tensor fallback (For backward compatibility)
         elif len(X_seq.shape) == 3:
             n_samples, n_steps, n_features = X_seq.shape
             extracted = np.zeros((n_samples, self.n_qubits, n_steps))
+            total = n_samples * n_steps
+            completed = 0
             for i in range(n_samples):
                 for t in range(n_steps):
                     exp_vals = self.qnode(X_seq[i, t, :], self.weights)
                     extracted[i, :, t] = exp_vals
+                    completed += 1
+                    if progress_callback is not None and (completed == total or completed % max(1, total // 100) == 0):
+                        progress_callback(completed / total)
             return torch.tensor(extracted, dtype=torch.float32)
+        raise ValueError("Expected a 3D or 4D input tensor for quantum feature extraction.")
