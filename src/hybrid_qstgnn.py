@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import json
 
 import matplotlib
 matplotlib.use("Agg")
@@ -29,9 +30,10 @@ class HybridQSTGNNFeatureEncoder:
     n_qubits: int = 3
     n_landmarks: int = 8
     random_state: int = 42
-    b_weight: float = 0.25
+    b_weight: float = 1.0
     save_visualizations: bool = True
     visualization_dir: str = "artifacts/kernel_visualizations"
+    save_arrays: bool = True
 
     def __post_init__(self):
         if self.n_qubits < 2:
@@ -106,8 +108,8 @@ class HybridQSTGNNFeatureEncoder:
         # Save compact diagnostics for both representation branches. The A plot
         # summarizes one sample/node; the B plot shows the actual fidelity
         # similarities (subsampled only for display when there are many rows).
-        if self.save_visualizations:
-            self._save_kernel_visualizations(A, similarities, n_samples, n_nodes, n_steps)
+        if self.save_visualizations or self.save_arrays:
+            self._save_kernel_artifacts(A, B, similarities, n_samples, n_nodes, n_steps)
 
         B = torch.as_tensor(B, dtype=torch.float32)
         # A is the primary representation. Scale B before concatenation so the
@@ -120,17 +122,45 @@ class HybridQSTGNNFeatureEncoder:
             progress_callback(1.0, "Quantum representation complete")
         return fused
 
-    def _save_kernel_visualizations(
-        self, A: torch.Tensor, similarities: np.ndarray,
+    def _save_kernel_artifacts(
+        self, A: torch.Tensor, B: np.ndarray, similarities: np.ndarray,
         n_samples: int, n_nodes: int, n_steps: int,
     ) -> None:
-        """Persist A-branch quantum features and B-branch fidelity similarities."""
+        """Persist quantum features, fidelity similarities, plots, and metadata."""
         out_dir = Path(self.visualization_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
-        # A branch: expectation-value representation, summarized over nodes.
-        a_view = A[0].mean(dim=0).detach().cpu().numpy()  # (qubits, time)
+        a_array = A.detach().cpu().numpy()
+        if self.save_arrays:
+            np.savez_compressed(
+                out_dir / f"quantum_kernel_artifacts_{stamp}.npz",
+                expectation_features=a_array,
+                fidelity_features=B,
+                fidelity_similarity_matrix=similarities,
+                training_landmarks=self.landmarks_,
+            )
+            metadata = {
+                "timestamp": stamp,
+                "n_samples": int(n_samples),
+                "n_nodes": int(n_nodes),
+                "n_time_steps": int(n_steps),
+                "n_qubits": int(self.n_qubits),
+                "n_landmarks": int(len(self.landmarks_)),
+                "b_weight": float(self.b_weight),
+                "expectation_feature_shape": list(a_array.shape),
+                "fidelity_feature_shape": list(B.shape),
+                "fidelity_matrix_shape": list(similarities.shape),
+                "landmarks_selected_from_training_data_only": True,
+            }
+            (out_dir / f"kernel_metadata_{stamp}.json").write_text(
+                json.dumps(metadata, indent=2), encoding="utf-8"
+            )
+
+        if not self.save_visualizations:
+            return
+
+        a_view = A[0].mean(dim=0).detach().cpu().numpy()
         fig, ax = plt.subplots(figsize=(max(7, n_steps * 0.35), 4.5))
         image = ax.imshow(a_view, aspect="auto", interpolation="nearest", cmap="viridis")
         ax.set_title("Quantum Feature Extraction (QKN expectation values)")
@@ -141,8 +171,6 @@ class HybridQSTGNNFeatureEncoder:
         fig.savefig(out_dir / f"quantum_features_{stamp}.png", dpi=180)
         plt.close(fig)
 
-        # B branch: fidelity-to-training-landmarks matrix. Limit plotted rows
-        # to 256 for readable files; all rows are still used in the model.
         display_rows = min(len(similarities), 256)
         row_ids = np.linspace(0, len(similarities) - 1, display_rows, dtype=int)
         kernel_view = similarities[row_ids]
