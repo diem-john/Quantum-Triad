@@ -1656,10 +1656,15 @@ with tab5:
                 test_loader = DataLoader(TensorDataset(X_test_q, y_test_tensor), batch_size=16, shuffle=False)
 
 
-                def collect_probabilities(loader):
+                inference_progress = st.progress(0.0, text="Preparing inference...")
+                inference_status = st.empty()
+                inference_telemetry = []
+
+                def collect_probabilities(loader, split_name):
                     raw_batches, calibrated_batches = [], []
+                    total_batches = max(1, len(loader))
                     with torch.no_grad():
-                        for inputs, _ in loader:
+                        for batch_index, (inputs, _) in enumerate(loader):
                             outputs = model(inputs, edge_index)
                             eps = 1e-7
                             raw = torch.clamp(outputs, eps, 1.0 - eps)
@@ -1667,14 +1672,32 @@ with tab5:
                             logits = torch.log(raw / (1.0 - raw))
                             calibrated = torch.sigmoid(logits / optimal_T)
                             calibrated_batches.append(calibrated.numpy())
+                            fraction = (batch_index + 1) / total_batches
+                            inference_progress.progress(
+                                fraction,
+                                text=f"{split_name}: batch {batch_index + 1}/{total_batches}"
+                            )
+                            inference_status.caption(
+                                f"{split_name} inference: {fraction:.0%} complete"
+                            )
+                            inference_telemetry.append({
+                                "split": split_name,
+                                "batch": int(batch_index + 1),
+                                "total_batches": int(total_batches),
+                                "progress_fraction": float(fraction),
+                                "batch_samples": int(inputs.shape[0]),
+                            })
                     return (
                         np.concatenate(raw_batches, axis=0).reshape(-1),
                         np.concatenate(calibrated_batches, axis=0).reshape(-1),
                     )
 
 
-                raw_val_flat, calibrated_val_flat = collect_probabilities(val_loader)
-                raw_probs_flat, probs_flat = collect_probabilities(test_loader)
+                raw_val_flat, calibrated_val_flat = collect_probabilities(val_loader, "Validation")
+                raw_probs_flat, probs_flat = collect_probabilities(test_loader, "Held-out test")
+                inference_progress.progress(1.0, text="Inference complete")
+                os.makedirs("artifacts/telemetry", exist_ok=True)
+                pd.DataFrame(inference_telemetry).to_csv("artifacts/telemetry/inference_telemetry.csv", index=False)
                 y_val_flat = np.asarray(st.session_state.y_val).reshape(-1).astype(int)
                 y_test_flat = np.asarray(st.session_state.y_test).reshape(-1).astype(int)
 
