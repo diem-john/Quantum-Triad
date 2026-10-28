@@ -65,6 +65,17 @@ def render_plotly_chart(fig, *args, **kwargs):
     except Exception:
         # PNG export depends on an optional image renderer; HTML is always retained.
         pass
+    # Use explicit unique keys because equivalent figures may be rendered in different tabs.
+    rendered_keys = list(st.session_state.get("_rendered_plotly_keys", []))
+    base_key = kwargs.get("key") or f"plotly_{safe_title}"
+    unique_key = base_key
+    suffix = 1
+    while unique_key in rendered_keys:
+        unique_key = f"{base_key}_{suffix}"
+        suffix += 1
+    kwargs["key"] = unique_key
+    rendered_keys.append(unique_key)
+    st.session_state["_rendered_plotly_keys"] = rendered_keys
     return st.plotly_chart(fig, *args, **kwargs)
 
 
