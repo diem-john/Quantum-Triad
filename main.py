@@ -1307,6 +1307,7 @@ with tab3:
             acc_history = pd.DataFrame(columns=['Val Accuracy'])
             best_val_loss = float('inf')
             best_model_weights = None
+            epoch_telemetry = []
 
             for epoch in range(epochs):
                 model.train()
@@ -3232,6 +3233,7 @@ with tab3:
             acc_history = pd.DataFrame(columns=['Val Accuracy'])
             best_val_loss = float('inf')
             best_model_weights = None
+            epoch_telemetry = []
 
             for epoch in range(epochs):
                 model.train()
