@@ -1258,12 +1258,16 @@ with tab5:
                     bool(torch.isinf(X_test_q).any().item())
                 )
 
-                # Rebuild QSTGNN with the same fused channel dimension used during training.
+                # Rebuild QSTGNN with the same architecture used during training.
+                # Hybrid training enables the learnable Branch B fusion gate, so inference
+                # must initialize that parameter before loading the saved state_dict.
+                hybrid_mode = config.get('architecture') == 'hybrid_qkn_ab_qstgnn'
                 model = QuantumSpatiotemporalGNN(
                     in_channels=model_in_channels, seq_len=4, conv_out=config['c_conv'],
-                    gat_heads=config['c_gat'], lstm_hidden=config['c_lstm'], dropout=config['c_drop']
+                    gat_heads=config['c_gat'], lstm_hidden=config['c_lstm'], dropout=config['c_drop'],
+                    fusion_a_channels=(int(config['q_qubits']) if hybrid_mode else None)
                 )
-                model.load_state_dict(torch.load("data/processed/hybrid_dl_weights.pt", weights_only=True))
+                model.load_state_dict(torch.load("data/processed/hybrid_dl_weights.pt", map_location="cpu", weights_only=True))
                 model.eval()
 
                 edge_index, _ = st.session_state.mapper.export_edge_index()
