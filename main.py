@@ -8,7 +8,8 @@ import plotly.express as px
 from shapely.geometry import LineString
 from sklearn.decomposition import KernelPCA
 import matplotlib.pyplot as plt
-import pennylane as qimport streamlit as st
+import pennylane as qml
+import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
@@ -41,6 +42,31 @@ from src.utils import haversine, rankine_vortex, vulnerability_curve
 from src.qkn import QuantumSpatiotemporalGNN
 from src.qkn_backend import create_qkn
 from src.qcp import QuantumConformalPredictor
+
+
+# Artifact persistence: every Plotly visualization is archived for reproducibility.
+from datetime import datetime
+from pathlib import Path
+
+def render_plotly_chart(fig, *args, **kwargs):
+    """Render a Plotly figure and persist HTML plus PNG when the renderer exists."""
+    artifact_dir = Path("artifacts/visualizations")
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    title = getattr(getattr(fig, "layout", None), "title", None)
+    title_text = getattr(title, "text", None) or "plotly_figure"
+    safe_title = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(title_text))[:60]
+    try:
+        fig.write_html(str(artifact_dir / f"{safe_title}_{stamp}.html"), include_plotlyjs="cdn")
+    except Exception as exc:
+        st.warning(f"Could not archive Plotly HTML artifact: {exc}")
+    try:
+        fig.write_image(str(artifact_dir / f"{safe_title}_{stamp}.png"), scale=2)
+    except Exception:
+        # PNG export depends on an optional image renderer; HTML is always retained.
+        pass
+    return st.plotly_chart(fig, *args, **kwargs)
+
 
 
 def label_distribution_frame(label_sets):
@@ -316,7 +342,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.plotly_chart(plot_interactive_map(st.session_state.mapper, "Enhanced IEEE 33-Bus System in Chiayi"))
+        render_plotly_chart(plot_interactive_map(st.session_state.mapper, "Enhanced IEEE 33-Bus System in Chiayi"))
     with col2:
         st.info(
             "**Geospatial & Temporal Setup**\n\nThe 33-bus system is mapped to Chiayi. The extraction pipeline now builds full **Grid Snapshots** required for Graph Neural Network message passing.")
@@ -596,7 +622,7 @@ with tab1:
             plot_bgcolor='white'
         )
 
-        st.plotly_chart(fig_viewer)
+        render_plotly_chart(fig_viewer)
     # --- META-HEURISTIC FEATURE SELECTION (CGWO) ---
     if st.session_state.get('coresets_generated', False):
         st.divider()
@@ -857,7 +883,7 @@ with tab1:
                                         line_color='red'))
                     fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[-np.pi, np.pi])),
                                             title="Average Node Phase Profiles")
-                    st.plotly_chart(fig_radar)
+                    render_plotly_chart(fig_radar)
 
                 with v_col2:
                     if len(selected_features) > 2:
@@ -879,7 +905,7 @@ with tab1:
                                              title=title_scatter, color_discrete_map={'Safe': 'blue', 'Failure': 'red'},
                                              opacity=0.7)
                     fig_scatter.update_traces(marker=dict(size=8, line=dict(width=1, color='DarkSlateGrey')))
-                    st.plotly_chart(fig_scatter)
+                    render_plotly_chart(fig_scatter)
 
                 st.success("Graph Matrices Prepared! You can now proceed to Phase 2 (Bayesian Optimization).")
 
@@ -1035,7 +1061,7 @@ with tab3:
                 "B-branch fusion weight",
                 min_value=0.0,
                 max_value=1.0,
-                value=0.25,
+                value=1.0,
                 step=0.05,
                 help="Scales fidelity-kernel branch B before A+B concatenation. 0 disables B; 0.25 makes B a secondary signal while preserving A expectation features unchanged."
             )
@@ -1204,7 +1230,7 @@ with tab3:
                             n_qubits=int(q_qubits),
                             n_landmarks=8,
                             random_state=42,
-                            b_weight=float(st.session_state.get("b_fusion_weight", 0.25))
+                            b_weight=float(st.session_state.get("b_fusion_weight", 1.0))
                         ).fit(st.session_state.X_seq_train)
                     X_q = encoder.transform(X_set, qkn, progress_callback=update_quantum_progress)
                 else:
@@ -1860,7 +1886,7 @@ with tab5:
                     color_discrete_map={"Certain (Sure)": "#2ecc71", "Ambiguous (Uncertain)": "#f39c12"}
                 )
                 fig_pie.update_layout(margin=dict(t=10, b=10, l=10, r=10))
-                st.plotly_chart(fig_pie)
+                render_plotly_chart(fig_pie)
 
             with col_stats:
                 st.write("**Model Autonomy vs. Intervention**")
@@ -2060,7 +2086,7 @@ with tab6:
             fig_hist.add_vline(x=fail_threshold, line_dash="dash", line_color="red", annotation_text="Fracture Cutoff")
             fig_hist.update_layout(height=200, margin=dict(t=10, b=0, l=0, r=0), xaxis_title=None,
                                    yaxis_title="Bus Count")
-            st.plotly_chart(fig_hist)
+            render_plotly_chart(fig_hist)
 
             st.markdown("#### Quantum Propagation Settings")
             time_evolution = st.slider("Quantum Evolution Time ($t$):", min_value=0.1, max_value=5.0, value=1.0,
@@ -2203,7 +2229,7 @@ with tab6:
                                 xaxis_title="Microgrid Nodes", yaxis_title="Probability Density",
                                 template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
                             )
-                            st.plotly_chart(fig_ctqw)
+                            render_plotly_chart(fig_ctqw)
 
             except Exception as e:
                 island_plot.error(f" Islanding Error: {e}")
@@ -2212,7 +2238,7 @@ with tab6:
 with tab1:
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.plotly_chart(plot_interactive_map(st.session_state.mapper, "Enhanced IEEE 33-Bus System in Chiayi"),
+        render_plotly_chart(plot_interactive_map(st.session_state.mapper, "Enhanced IEEE 33-Bus System in Chiayi"),
                         width="stretch")
     with col2:
         st.info(
@@ -2490,7 +2516,7 @@ with tab1:
             plot_bgcolor='white'
         )
 
-        st.plotly_chart(fig_viewer, width="stretch")
+        render_plotly_chart(fig_viewer, width="stretch")
     # --- META-HEURISTIC FEATURE SELECTION (CGWO) ---
     if st.session_state.get('coresets_generated', False):
         st.divider()
@@ -2749,7 +2775,7 @@ with tab1:
                                                         line_color='red'))
                     fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[-np.pi, np.pi])),
                                             title="Average Node Phase Profiles")
-                    st.plotly_chart(fig_radar, width="stretch")
+                    render_plotly_chart(fig_radar, width="stretch")
 
                 with v_col2:
                     if len(selected_features) > 2:
@@ -2770,7 +2796,7 @@ with tab1:
                                              title=title_scatter, color_discrete_map={'Safe': 'blue', 'Failure': 'red'},
                                              opacity=0.7)
                     fig_scatter.update_traces(marker=dict(size=8, line=dict(width=1, color='DarkSlateGrey')))
-                    st.plotly_chart(fig_scatter, width="stretch")
+                    render_plotly_chart(fig_scatter, width="stretch")
 
                 st.success("Graph Matrices Prepared! You can now proceed to Phase 2 (Bayesian Optimization).")
 
@@ -3715,7 +3741,7 @@ with tab5:
                     color_discrete_map={"Certain (Sure)": "#2ecc71", "Ambiguous (Uncertain)": "#f39c12"}
                 )
                 fig_pie.update_layout(margin=dict(t=10, b=10, l=10, r=10))
-                st.plotly_chart(fig_pie, width="stretch")
+                render_plotly_chart(fig_pie, width="stretch")
 
             with col_stats:
                 st.write("**Model Autonomy vs. Intervention**")
@@ -3920,7 +3946,7 @@ with tab6:
             fig_hist.add_vline(x=fail_threshold, line_dash="dash", line_color="red", annotation_text="Fracture Cutoff")
             fig_hist.update_layout(height=200, margin=dict(t=10, b=0, l=0, r=0), xaxis_title=None,
                                    yaxis_title="Bus Count")
-            st.plotly_chart(fig_hist, width="stretch")
+            render_plotly_chart(fig_hist, width="stretch")
 
             st.markdown("#### Quantum Propagation Settings")
             time_evolution = st.slider("Quantum Evolution Time ($t$):", min_value=0.1, max_value=5.0, value=1.0,
@@ -4062,7 +4088,7 @@ with tab6:
                                 xaxis_title="Microgrid Nodes", yaxis_title="Probability Density",
                                 template="plotly_white", margin=dict(l=20, r=20, t=40, b=20)
                             )
-                            st.plotly_chart(fig_ctqw, width="stretch")
+                            render_plotly_chart(fig_ctqw, width="stretch")
 
             except Exception as e:
                 island_plot.error(f" Islanding Error: {e}")
