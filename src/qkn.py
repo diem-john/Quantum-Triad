@@ -37,10 +37,20 @@ class QuantumSpatiotemporalGNN(nn.Module):
     (Batch, Nodes, Channels, Sequence_Length)
     """
 
-    def __init__(self, in_channels=4, seq_len=4, conv_out=16, gat_heads=2, lstm_hidden=32, dropout=0.2):
+    def __init__(self, in_channels=4, seq_len=4, conv_out=16, gat_heads=2, lstm_hidden=32, dropout=0.2, fusion_a_channels=None):
         super(QuantumSpatiotemporalGNN, self).__init__()
 
-        # 1. TEMPORAL BOTTLENECK: Smooths the Quantum Kernel outputs over time
+        # Optional trainable gated fusion for hybrid A+B inputs. A channels remain
+        # the anchor; B channels are scaled by a learned sigmoid gate before temporal learning.
+        self.fusion_a_channels = int(fusion_a_channels) if fusion_a_channels is not None else None
+        self.fusion_gate = None
+        if self.fusion_a_channels is not None:
+            if not 0 < self.fusion_a_channels < int(in_channels):
+                raise ValueError("fusion_a_channels must split A and B channels inside in_channels.")
+            b_channels = int(in_channels) - self.fusion_a_channels
+            self.fusion_gate = nn.Parameter(torch.full((b_channels,), -2.0))  # initial B weight ~= 0.119
+
+        # 1. TEMPORAL BOTTLENECK: Smooths the quantum features over time
         self.conv1 = nn.Conv1d(in_channels, conv_out, kernel_size=3, padding=1)
         self.bn = nn.BatchNorm1d(conv_out)
 
@@ -71,13 +81,28 @@ class QuantumSpatiotemporalGNN(nn.Module):
             nn.Sigmoid()  # Required for BCELoss and Focal Loss downstream
         )
 
+    def fusion_weights(self):
+        """Return learned B-branch gates as CPU floats; empty for A-only models."""
+        if self.fusion_gate is None:
+            return []
+        return torch.sigmoid(self.fusion_gate.detach()).cpu().tolist()
+
     def forward(self, x_seq, edge_index):
         # x_seq shape: (Batch, Nodes, in_channels, seq_len)
         b_size, n_nodes, in_c, s_len = x_seq.shape
 
+        # --- Step 0: A-preserving learned gated fusion ---
+        # Input channels are [A features | B features]. The gate is learned by
+        # backpropagation and logged for telemetry by callers via model.fusion_weights().
+        if self.fusion_gate is not None:
+            a = x_seq[:, :, :self.fusion_a_channels, :]
+            b = x_seq[:, :, self.fusion_a_channels:, :]
+            gate = torch.sigmoid(self.fusion_gate).view(1, 1, -1, 1)
+            x_seq = torch.cat((a, b * gate), dim=2)
+
         # --- Step 1: Temporal Convolution ---
         # Temporarily merge Batch and Nodes so Conv1D treats them as independent series
-        x_flat = x_seq.view(b_size * n_nodes, in_c, s_len)
+        x_flat = x_seq.reshape(b_size * n_nodes, in_c, s_len)
         x_conv = F.relu(self.bn(self.conv1(x_flat)))  # (B*N, conv_out, seq_len)
         x_conv = x_conv.permute(0, 2, 1)  # (B*N, seq_len, conv_out)
 
