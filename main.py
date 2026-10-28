@@ -3295,7 +3295,10 @@ with tab3:
 
                 loss_chart.line_chart(loss_history)
                 acc_chart.line_chart(acc_history)
-                train_progress.progress((epoch + 1) / epochs)
+                train_progress.progress((epoch + 1) / epochs, text=f"Training epoch {epoch + 1}/{epochs} | train loss {avg_train_loss:.4f} | val loss {avg_val_loss:.4f}")
+                epoch_telemetry.append({"epoch": int(epoch + 1), "train_loss": float(avg_train_loss), "validation_loss": float(avg_val_loss), "validation_accuracy": float(val_accuracy), "learning_rate": float(optimizer.param_groups[0]["lr"]), "best_validation_loss": float(best_val_loss)})
+                os.makedirs("artifacts/telemetry", exist_ok=True)
+                pd.DataFrame(epoch_telemetry).to_csv("artifacts/telemetry/training_telemetry.csv", index=False)
 
             if best_model_weights is not None:
                 model.load_state_dict(best_model_weights)
