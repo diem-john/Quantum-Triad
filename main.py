@@ -3309,6 +3309,14 @@ with tab3:
                 model.load_state_dict(best_model_weights)
 
             os.makedirs("data/processed", exist_ok=True)
+            if hasattr(model, "fusion_weights") and model.fusion_weights():
+                gate_values = model.fusion_weights()
+                st.markdown("#### Gated Fusion Telemetry")
+                gate_df = pd.DataFrame({"B_channel": np.arange(len(gate_values)), "Gate": gate_values})
+                st.dataframe(gate_df, use_container_width=True)
+                st.bar_chart(gate_df.set_index("B_channel"))
+                os.makedirs("artifacts/telemetry", exist_ok=True)
+                gate_df.to_csv("artifacts/telemetry/gated_fusion_weights.csv", index=False)
             torch.save(model.state_dict(), "data/processed/hybrid_dl_weights.pt")
 
             model.eval()
