@@ -3205,7 +3205,8 @@ with tab3:
             telemetry_status.info(" Initializing PyTorch Graph and Beginning Training...")
 
             model = QuantumSpatiotemporalGNN(in_channels=model_in_channels, seq_len=dynamic_seq_len, conv_out=c_conv,
-                                             gat_heads=c_gat, lstm_hidden=c_lstm, dropout=c_drop)
+                                             gat_heads=c_gat, lstm_hidden=c_lstm, dropout=c_drop,
+                                             fusion_a_channels=(int(q_qubits) if hybrid_mode else None))
 
             optimizer = optim.Adam(model.parameters(), lr=c_lr, weight_decay=1e-3)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
