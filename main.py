@@ -1862,6 +1862,11 @@ with tab5:
             with open("artifacts/metrics/classification_metrics.json", "w", encoding="utf-8") as metrics_file:
                 import json
                 json.dump({"Raw": m_raw, "Calibrated": m_calibrated, "QCP Fail-Safe": m_qcp}, metrics_file, indent=2)
+            os.makedirs("artifacts/metrics", exist_ok=True)
+            pd.DataFrame([{"model": "Raw", **m_raw}, {"model": "Calibrated", **m_calibrated}, {"model": "QCP Fail-Safe", **m_qcp}]).to_csv("artifacts/metrics/classification_metrics.csv", index=False)
+            with open("artifacts/metrics/classification_metrics.json", "w", encoding="utf-8") as metrics_file:
+                import json
+                json.dump({"Raw": m_raw, "Calibrated": m_calibrated, "QCP Fail-Safe": m_qcp}, metrics_file, indent=2)
 
             # Retain per-architecture test metrics in this Streamlit session so A-only
             # and A+B can be compared after each is trained/evaluated on the same split.
@@ -3721,6 +3726,11 @@ with tab5:
             m_raw = get_metrics(y_test, y_raw)
             m_calibrated = get_metrics(y_test, y_calibrated)
             m_qcp = get_metrics(y_test, y_qcp)
+            os.makedirs("artifacts/metrics", exist_ok=True)
+            pd.DataFrame([{"model": "Raw", **m_raw}, {"model": "Calibrated", **m_calibrated}, {"model": "QCP Fail-Safe", **m_qcp}]).to_csv("artifacts/metrics/classification_metrics.csv", index=False)
+            with open("artifacts/metrics/classification_metrics.json", "w", encoding="utf-8") as metrics_file:
+                import json
+                json.dump({"Raw": m_raw, "Calibrated": m_calibrated, "QCP Fail-Safe": m_qcp}, metrics_file, indent=2)
 
             # Retain per-architecture test metrics in this Streamlit session so A-only
             # and A+B can be compared after each is trained/evaluated on the same split.
