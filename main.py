@@ -1591,8 +1591,28 @@ with tab5:
                         weights_only=True
                     )
                     encoder = HybridQSTGNNFeatureEncoder.from_state_dict(encoder_state)
-                    X_val_q = encoder.transform(st.session_state.X_seq_val, qkn)
-                    X_test_q = encoder.transform(st.session_state.X_seq_test, qkn)
+                    feature_progress = st.progress(0.0, text="Rebuilding quantum representations...")
+                    feature_status = st.empty()
+
+                    def update_inference_feature_progress(fraction, detail=""):
+                        feature_progress.progress(float(np.clip(fraction, 0.0, 1.0)),
+                                                  text=detail or "Extracting quantum representations")
+                        feature_status.caption(f"Quantum representation extraction: {float(fraction):.0%} complete")
+
+                    X_val_q = encoder.transform(
+                        st.session_state.X_seq_val, qkn,
+                        progress_callback=lambda fraction, detail="": update_inference_feature_progress(
+                            0.5 * fraction, f"Validation: {detail}"
+                        )
+                    )
+                    X_test_q = encoder.transform(
+                        st.session_state.X_seq_test, qkn,
+                        progress_callback=lambda fraction, detail="": update_inference_feature_progress(
+                            0.5 + 0.5 * fraction, f"Held-out test: {detail}"
+                        )
+                    )
+                    feature_progress.progress(1.0, text="Quantum representations ready")
+                    feature_status.caption("Validation and held-out test representations are ready.")
                     model_in_channels = int(config.get('model_in_channels', encoder.output_channels))
                 else:
                     X_val_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_val)
