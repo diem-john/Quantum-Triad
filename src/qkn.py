@@ -37,18 +37,30 @@ class QuantumSpatiotemporalGNN(nn.Module):
     (Batch, Nodes, Channels, Sequence_Length)
     """
 
-    def __init__(self, in_channels=4, seq_len=4, conv_out=16, gat_heads=2, lstm_hidden=32, dropout=0.2, fusion_a_channels=None):
+    def __init__(
+        self, in_channels=4, seq_len=4, conv_out=16, gat_heads=2,
+        lstm_hidden=32, dropout=0.2, fusion_a_channels=None,
+        fusion_b_channels=None, fusion_b_weight=0.25,
+    ):
         super(QuantumSpatiotemporalGNN, self).__init__()
 
-        # Optional trainable gated fusion for hybrid A+B inputs. A channels remain
-        # the anchor; B channels are scaled by a learned sigmoid gate before temporal learning.
+        # Project A and B independently to a shared latent width, then blend
+        # with complementary coefficients. For hybrid inputs, in_channels is
+        # the fused width, not the raw concatenated input width.
         self.fusion_a_channels = int(fusion_a_channels) if fusion_a_channels is not None else None
-        self.fusion_gate = None
-        if self.fusion_a_channels is not None:
-            if not 0 < self.fusion_a_channels < int(in_channels):
-                raise ValueError("fusion_a_channels must split A and B channels inside in_channels.")
-            b_channels = int(in_channels) - self.fusion_a_channels
-            self.fusion_gate = nn.Parameter(torch.full((b_channels,), -2.0))  # initial B weight ~= 0.119
+        self.fusion_b_channels = int(fusion_b_channels) if fusion_b_channels is not None else None
+        self.fusion_b_weight = float(fusion_b_weight)
+        self.fusion_a_projection = None
+        self.fusion_b_projection = None
+        if self.fusion_a_channels is not None or self.fusion_b_channels is not None:
+            if self.fusion_a_channels is None or self.fusion_b_channels is None:
+                raise ValueError("Hybrid fusion requires both fusion_a_channels and fusion_b_channels.")
+            if self.fusion_a_channels < 1 or self.fusion_b_channels < 1:
+                raise ValueError("Hybrid branch channel counts must be positive.")
+            if not 0.0 <= self.fusion_b_weight <= 1.0:
+                raise ValueError("fusion_b_weight must be between 0 and 1.")
+            self.fusion_a_projection = nn.Conv1d(self.fusion_a_channels, int(in_channels), kernel_size=1)
+            self.fusion_b_projection = nn.Conv1d(self.fusion_b_channels, int(in_channels), kernel_size=1)
 
         # 1. TEMPORAL BOTTLENECK: Smooths the quantum features over time
         self.conv1 = nn.Conv1d(in_channels, conv_out, kernel_size=3, padding=1)
@@ -82,23 +94,43 @@ class QuantumSpatiotemporalGNN(nn.Module):
         )
 
     def fusion_weights(self):
-        """Return learned B-branch gates as CPU floats; empty for A-only models."""
-        if self.fusion_gate is None:
+        """Return explicit complementary A/B fusion coefficients."""
+        if self.fusion_a_projection is None:
             return []
-        return torch.sigmoid(self.fusion_gate.detach()).cpu().tolist()
+        return [1.0 - self.fusion_b_weight, self.fusion_b_weight]
 
     def forward(self, x_seq, edge_index):
-        # x_seq shape: (Batch, Nodes, in_channels, seq_len)
-        b_size, n_nodes, in_c, s_len = x_seq.shape
+        # A-only input: (Batch, Nodes, A_channels, seq_len).
+        # Hybrid input: (Batch, Nodes, A_channels + B_channels, seq_len).
+        b_size, n_nodes, input_channels, s_len = x_seq.shape
 
-        # --- Step 0: A-preserving learned gated fusion ---
-        # Input channels are [A features | B features]. The gate is learned by
-        # backpropagation and logged for telemetry by callers via model.fusion_weights().
-        if self.fusion_gate is not None:
-            a = x_seq[:, :, :self.fusion_a_channels, :]
-            b = x_seq[:, :, self.fusion_a_channels:, :]
-            gate = torch.sigmoid(self.fusion_gate).view(1, 1, -1, 1)
-            x_seq = torch.cat((a, b * gate), dim=2)
+        if self.fusion_a_projection is not None:
+            expected = self.fusion_a_channels + self.fusion_b_channels
+            if input_channels != expected:
+                raise ValueError(
+                    f"Hybrid fusion expected {expected} input channels "
+                    f"(A={self.fusion_a_channels}, B={self.fusion_b_channels}), "
+                    f"received {input_channels}."
+                )
+            a = x_seq[:, :, :self.fusion_a_channels, :].reshape(
+                b_size * n_nodes, self.fusion_a_channels, s_len
+            )
+            b = x_seq[:, :, self.fusion_a_channels:, :].reshape(
+                b_size * n_nodes, self.fusion_b_channels, s_len
+            )
+            h_a = self.fusion_a_projection(a)
+            h_b = self.fusion_b_projection(b)
+            w_b = self.fusion_b_weight
+            x_seq = ((1.0 - w_b) * h_a + w_b * h_b).reshape(
+                b_size, n_nodes, int(h_a.shape[1]), s_len
+            )
+            in_c = int(h_a.shape[1])
+        else:
+            in_c = input_channels
+            if in_c != self.conv1.in_channels:
+                raise ValueError(
+                    f"Model expects {self.conv1.in_channels} channels, received {in_c}."
+                )
 
         # --- Step 1: Temporal Convolution ---
         # Temporarily merge Batch and Nodes so Conv1D treats them as independent series
