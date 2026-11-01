@@ -323,22 +323,6 @@ if 'qcp_calibrated' not in st.session_state:
 if 'bus_train' not in st.session_state:
     st.session_state.bus_train = []
 
-# --- SIDEBAR CONTROLS ---
-# st.sidebar.header("Pipeline Controls")
-# # n_samples = st.sidebar.slider("Sample Size (POC Speed)", 50, 500, 150)
-# qkn_qubits = st.sidebar.selectbox("QKN Qubits", [1, 2, 3, 4, 5], index=0)
-# qkn_layers = st.sidebar.slider("QKN Entangling Layers", 1, 5, 2)
-# target_coverage = st.sidebar.slider("QCP Target Coverage (%)", 80, 99, 90) / 100.0
-
-# --- TAB NAVIGATION ---
-# tab1, tab2, tab3, tab4, tab5 = st.tabs([
-#     " Phase 1: Geo-Extraction",
-#     " Phase 2: Quantum Training",
-#     " Phase 3: Uncertainty Calibration",
-#     " Phase 4: Inference Testing",
-#     " Phase 5: CTQW Islanding"
-# ])
-
 # --- TAB NAVIGATION ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     " Phase 1: Geo-Extraction",
@@ -738,20 +722,100 @@ with tab1:
 
         if 'cgwo_best_mask' in st.session_state:
             active_mask = st.session_state.cgwo_best_mask
-            selected_features = [feature_cols_all[j] for j in range(len(active_mask)) if active_mask[j] == 1]
 
-            st.info(f" **Alpha Wolf Optimal Subset:** {', '.join(selected_features)}")
+            # --------------------------------------------------
+            # 1. Display the original CGWO optimization results
+            # --------------------------------------------------
+            optimizer_features = [
+                feature_cols_all[j]
+                for j in range(len(active_mask))
+                if active_mask[j] == 1
+            ]
 
-            if st.button("Lock Topology & Formulate Quantum Graph Dataset"):
+            st.success(
+                f"Optimization Complete! "
+                f"Peak Balanced Accuracy: "
+                f"{st.session_state.cgwo_best_score:.4f}"
+            )
+
+            st.markdown("#### CGWO Optimization Results")
+
+            st.info(
+                f"**Alpha Wolf Optimal Subset:** "
+                f"{', '.join(optimizer_features)}"
+            )
+
+            st.caption(
+                f"CGWO selected {len(optimizer_features)} "
+                f"out of {len(feature_cols_all)} available features."
+            )
+
+            # --------------------------------------------------
+            # 2. Allow manual customization of selected features
+            # --------------------------------------------------
+            st.divider()
+
+            st.markdown("#### Customize Feature Selection")
+
+            st.write(
+                "CGWO provides an optimized feature subset as a "
+                "starting point. You can retain its recommendations, "
+                "remove features, or include additional features "
+                "before constructing the quantum graph dataset."
+            )
+
+            selected_features = st.multiselect(
+                "Select the features to include in the dataset:",
+                options=feature_cols_all,
+                default=optimizer_features,
+                key="cgwo_manual_feature_selection",
+                help=(
+                    "Features selected by CGWO are preselected. "
+                    "Modify this list to customize the final dataset."
+                ),
+            )
+
+            # Show the final selection before proceeding
+            st.markdown("#### Final Feature Selection")
+
+            if selected_features:
+                st.write(
+                    f"**Selected {len(selected_features)} "
+                    f"of {len(feature_cols_all)} features:**"
+                )
+
+                st.code(", ".join(selected_features))
+            else:
+                st.warning(
+                    "No features selected. Select at least two "
+                    "features before constructing the graph dataset."
+                )
+
+            # --------------------------------------------------
+            # 3. Lock the user's final feature selection
+            # --------------------------------------------------
+            if st.button(
+                    "Lock Topology & Formulate Quantum Graph Dataset",
+                    disabled=len(selected_features) < 2,
+            ):
                 import os
                 import plotly.graph_objects as go
                 import plotly.express as px
                 from sklearn.decomposition import PCA
 
-                # Apply the CGWO mask to the 4D Tensor
-                selected_indices = [feature_cols_all.index(f) for f in selected_features]
-                X_tensor = st.session_state.X_grid_tensor[:, :, :, selected_indices]  # (Snapshots, 33, 4, Selected)
-                Y_tensor = st.session_state.Y_grid_tensor  # (Snapshots, 33)
+                # Use the MANUALLY SELECTED features,
+                # not the original CGWO mask.
+                selected_indices = [
+                    feature_cols_all.index(f)
+                    for f in selected_features
+                ]
+
+                # Apply the final feature selection to the 4D tensor
+                X_tensor = st.session_state.X_grid_tensor[
+                           :, :, :, selected_indices
+                           ]
+
+                Y_tensor = st.session_state.Y_grid_tensor
 
                 n_samples = len(X_tensor)
                 storm_ids = np.asarray(st.session_state.storm_ids).astype(str)
@@ -784,9 +848,9 @@ with tab1:
                 test_storms = set(partition_storms["test"])
                 all_partition_storms = [train_storms, val_storms, cal_storms, test_storms]
                 if any(
-                    all_partition_storms[i] & all_partition_storms[j]
-                    for i in range(len(all_partition_storms))
-                    for j in range(i + 1, len(all_partition_storms))
+                        all_partition_storms[i] & all_partition_storms[j]
+                        for i in range(len(all_partition_storms))
+                        for j in range(i + 1, len(all_partition_storms))
                 ):
                     st.error("Event split integrity check failed: storm overlap detected.")
                     st.stop()
@@ -885,9 +949,11 @@ with tab1:
 
                     fig_radar = go.Figure()
                     fig_radar.add_trace(
-                        go.Scatterpolar(r=mean_safe, theta=radial_cols, fill='toself', name='Safe (0)', line_color='blue'))
-                    fig_radar.add_trace(go.Scatterpolar(r=mean_fail, theta=radial_cols, fill='toself', name='Failure (1)',
-                                                        line_color='red'))
+                        go.Scatterpolar(r=mean_safe, theta=radial_cols, fill='toself', name='Safe (0)',
+                                        line_color='blue'))
+                    fig_radar.add_trace(
+                        go.Scatterpolar(r=mean_fail, theta=radial_cols, fill='toself', name='Failure (1)',
+                                        line_color='red'))
                     fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True, range=[-np.pi, np.pi])),
                                             title="Average Node Phase Profiles")
                     render_plotly_chart(fig_radar, width="stretch")
@@ -907,7 +973,8 @@ with tab1:
                     df_scatter['State'] = Y_flat
                     df_scatter['State'] = df_scatter['State'].map({0: 'Safe', 1: 'Failure'})
 
-                    fig_scatter = px.scatter(df_scatter, x=df_scatter.columns[0], y=df_scatter.columns[1], color='State',
+                    fig_scatter = px.scatter(df_scatter, x=df_scatter.columns[0], y=df_scatter.columns[1],
+                                             color='State',
                                              title=title_scatter, color_discrete_map={'Safe': 'blue', 'Failure': 'red'},
                                              opacity=0.7)
                     fig_scatter.update_traces(marker=dict(size=8, line=dict(width=1, color='DarkSlateGrey')))
