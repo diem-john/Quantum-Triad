@@ -112,11 +112,8 @@ class HybridQSTGNNFeatureEncoder:
             self._save_kernel_artifacts(A, B, similarities, n_samples, n_nodes, n_steps)
 
         B = torch.as_tensor(B, dtype=torch.float32)
-        # A is the primary representation. Scale B before concatenation so the
-        # fidelity branch contributes a smaller signal to the downstream GNN.
-        B = B * float(self.b_weight)
-
-        # Feature fusion occurs before temporal and graph message passing.
+        # Keep both branches unscaled here. The model projects each branch to a
+        # shared latent width, then applies the explicit complementary weights.
         fused = torch.cat([A, B], dim=2).contiguous()
         if progress_callback is not None:
             progress_callback(1.0, "Quantum representation complete")
