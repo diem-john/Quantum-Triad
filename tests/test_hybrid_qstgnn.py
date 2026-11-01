@@ -51,3 +51,44 @@ def test_fused_features_run_through_qstgnn():
     output = model(fused, edges)
     assert output.shape == (2, 4)
     assert torch.isfinite(output).all()
+
+@pytest.mark.parametrize("weight_b", [0.0, 0.25, 0.5, 0.75, 1.0])
+def test_complementary_fusion_weights_are_applied_after_branch_projection(weight_b):
+    """Verify H_fused = (1 - w_B) H_A + w_B H_B at the model fusion point."""
+    torch.manual_seed(11)
+    x = torch.randn(2, 4, 5, 3)  # A has 2 channels; B has 3 channels.
+    model = QuantumSpatiotemporalGNN(
+        in_channels=4,
+        seq_len=3,
+        conv_out=4,
+        gat_heads=1,
+        lstm_hidden=4,
+        dropout=0.0,
+        fusion_a_channels=2,
+        fusion_b_channels=3,
+        fusion_b_weight=weight_b,
+    )
+    model.eval()
+
+    captured = {}
+
+    def capture_conv_input(_module, inputs):
+        captured["fused"] = inputs[0].detach().clone()
+
+    hook = model.conv1.register_forward_pre_hook(capture_conv_input)
+    edges = torch.tensor(
+        [[0, 1, 1, 2, 2, 3, 3, 0], [1, 0, 2, 1, 3, 2, 0, 3]],
+        dtype=torch.long,
+    )
+    with torch.no_grad():
+        model(x, edges)
+        a = x[:, :, :2, :].reshape(2 * 4, 2, 3)
+        b = x[:, :, 2:, :].reshape(2 * 4, 3, 3)
+        h_a = model.fusion_a_projection(a)
+        h_b = model.fusion_b_projection(b)
+        expected = ((1.0 - weight_b) * h_a + weight_b * h_b)
+    hook.remove()
+
+    torch.testing.assert_close(captured["fused"], expected)
+    assert model.fusion_weights() == pytest.approx([1.0 - weight_b, weight_b])
+
