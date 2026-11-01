@@ -1063,12 +1063,12 @@ with tab3:
             )
             st.session_state.model_architecture = model_architecture
             b_fusion_weight = st.slider(
-                "B-branch fusion weight",
+                "Branch B contribution to fused features",
                 min_value=0.0,
                 max_value=1.0,
                 value=0.25,
                 step=0.05,
-                help="Scales fidelity-kernel branch B before A+B concatenation. 0 disables B; 0.25 makes B a secondary signal while preserving A expectation features unchanged."
+                help="Blends projected branch features: H_fused = (1 - w_B) H_A + w_B H_B. Branch A contribution is 1 - w_B. These coefficients do not guarantee the same percentages of final predictions."
             )
             st.session_state.b_fusion_weight = float(b_fusion_weight)
 
@@ -1229,7 +1229,7 @@ with tab3:
                             n_qubits=int(q_qubits),
                             n_landmarks=8,
                             random_state=42,
-                            b_weight=float(st.session_state.get("b_fusion_weight", 0.25))
+                            b_weight=1.0
                         ).fit(st.session_state.X_seq_train)
                     X_q = encoder.transform(X_set, qkn, progress_callback=update_quantum_progress)
                 else:
@@ -1247,12 +1247,15 @@ with tab3:
                 os.makedirs("data/processed", exist_ok=True)
                 torch.save(encoder.state_dict(), "data/processed/hybrid_qstgnn_encoder.pt")
                 st.session_state.hybrid_encoder_state = encoder.state_dict()
-                model_in_channels = encoder.output_channels
-                st.session_state.hybrid_feature_channels = model_in_channels
+                # Raw A+B are projected to q_qubits shared latent channels in the model.
+                model_input_channels = encoder.output_channels
+                model_in_channels = int(q_qubits)
+                st.session_state.hybrid_feature_channels = model_input_channels
                 telemetry_status.info(
-                    f" Weighted hybrid fusion complete: A has priority; {q_qubits} expectation channels "
-                    f"are unchanged and {len(encoder.landmarks_)} B fidelity channels are scaled by "
-                    f"{encoder.b_weight:.2f}. Total QSTGNN input channels: {model_in_channels}."
+                    f" Weighted feature fusion: A coefficient = "
+                    f"{1.0 - float(st.session_state.get('b_fusion_weight', 0.25)):.2f}; "
+                    f"B coefficient = {float(st.session_state.get('b_fusion_weight', 0.25)):.2f}. "
+                    f"Both branches are projected to {model_in_channels} latent channels before blending."
                 )
             else:
                 model_in_channels = int(q_qubits)
@@ -1275,9 +1278,13 @@ with tab3:
 
             telemetry_status.info(" Initializing PyTorch Graph and Beginning Training...")
 
-            model = QuantumSpatiotemporalGNN(in_channels=model_in_channels, seq_len=dynamic_seq_len, conv_out=c_conv,
-                                             gat_heads=c_gat, lstm_hidden=c_lstm, dropout=c_drop,
-                                             fusion_a_channels=(int(q_qubits) if hybrid_mode else None))
+            model = QuantumSpatiotemporalGNN(
+                in_channels=model_in_channels, seq_len=dynamic_seq_len, conv_out=c_conv,
+                gat_heads=c_gat, lstm_hidden=c_lstm, dropout=c_drop,
+                fusion_a_channels=(int(q_qubits) if hybrid_mode else None),
+                fusion_b_channels=(int(len(encoder.landmarks_)) if hybrid_mode else None),
+                fusion_b_weight=float(st.session_state.get("b_fusion_weight", 0.25)),
+            )
 
             optimizer = optim.Adam(model.parameters(), lr=c_lr, weight_decay=1e-3)
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
@@ -1376,13 +1383,16 @@ with tab3:
 
             os.makedirs("data/processed", exist_ok=True)
             if hasattr(model, "fusion_weights") and model.fusion_weights():
-                gate_values = model.fusion_weights()
-                st.markdown("#### Gated Fusion Telemetry")
-                gate_df = pd.DataFrame({"B_channel": np.arange(len(gate_values)), "Gate": gate_values})
-                st.dataframe(gate_df, use_container_width=True)
-                st.bar_chart(gate_df.set_index("B_channel"))
+                fusion_values = model.fusion_weights()
+                st.markdown("#### Weighted Feature Fusion Telemetry")
+                fusion_df = pd.DataFrame({
+                    "Branch": ["A: expectation features", "B: fidelity features"],
+                    "Fusion coefficient": fusion_values,
+                })
+                st.dataframe(fusion_df, use_container_width=True)
+                st.bar_chart(fusion_df.set_index("Branch"))
                 os.makedirs("artifacts/telemetry", exist_ok=True)
-                gate_df.to_csv("artifacts/telemetry/gated_fusion_weights.csv", index=False)
+                fusion_df.to_csv("artifacts/telemetry/weighted_feature_fusion.csv", index=False)
             torch.save(model.state_dict(), "data/processed/hybrid_dl_weights.pt")
 
             model.eval()
@@ -1394,6 +1404,9 @@ with tab3:
                 'q_qubits': q_qubits, 'q_layers': q_layers, 'q_entangle': q_entangle,
                 'architecture': 'hybrid_qkn_ab_qstgnn' if hybrid_mode else 'qstgnn_expectation_a',
                 'model_in_channels': int(model_in_channels),
+                'hybrid_input_channels': int(model_input_channels) if hybrid_mode else int(model_in_channels),
+                'fusion_b_weight': float(st.session_state.get("b_fusion_weight", 0.25)),
+                'fusion_b_channels': int(len(encoder.landmarks_)) if hybrid_mode else None,
                 'c_conv': c_conv, 'c_gat': c_gat, 'c_lstm': c_lstm, 'c_drop': c_drop
             }
             st.session_state.model_trained = True
@@ -1587,7 +1600,9 @@ with tab5:
                     encoder = HybridQSTGNNFeatureEncoder.from_state_dict(encoder_state)
                     X_val_q = encoder.transform(st.session_state.X_seq_val, qkn)
                     X_test_q = encoder.transform(st.session_state.X_seq_test, qkn)
-                    model_in_channels = int(config.get('model_in_channels', encoder.output_channels))
+                    model_in_channels = int(config.get('model_in_channels', config['q_qubits']))
+                    hybrid_input_channels = model_in_channels
+                    hybrid_input_channels = int(config.get('hybrid_input_channels', encoder.output_channels))
                 else:
                     X_val_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_val)
                     X_test_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_test)
@@ -1637,7 +1652,9 @@ with tab5:
                 model = QuantumSpatiotemporalGNN(
                     in_channels=model_in_channels, seq_len=4, conv_out=config['c_conv'],
                     gat_heads=config['c_gat'], lstm_hidden=config['c_lstm'], dropout=config['c_drop'],
-                    fusion_a_channels=(int(config['q_qubits']) if hybrid_mode else None)
+                    fusion_a_channels=(int(config['q_qubits']) if hybrid_mode else None),
+                    fusion_b_channels=(int(config.get('fusion_b_channels') or 8) if hybrid_mode else None),
+                    fusion_b_weight=float(config.get('fusion_b_weight', 0.25)),
                 )
                 model.load_state_dict(torch.load(
                     "data/processed/hybrid_dl_weights.pt",
