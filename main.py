@@ -1601,7 +1601,6 @@ with tab5:
                     X_val_q = encoder.transform(st.session_state.X_seq_val, qkn)
                     X_test_q = encoder.transform(st.session_state.X_seq_test, qkn)
                     model_in_channels = int(config.get('model_in_channels', config['q_qubits']))
-                    hybrid_input_channels = model_in_channels
                     hybrid_input_channels = int(config.get('hybrid_input_channels', encoder.output_channels))
                 else:
                     X_val_q = qkn.extract_temporal_quantum_features(st.session_state.X_seq_val)
@@ -1645,9 +1644,8 @@ with tab5:
                     bool(torch.isinf(X_test_q).any().item())
                 )
 
-                # Rebuild QSTGNN with the same architecture used during training.
-                # Hybrid training creates a learnable fusion_gate; initialize it before
-                # loading the checkpoint to keep Phase 5 compatible with the trained model.
+                # Rebuild QSTGNN with the same branch projections and fixed fusion
+                # coefficients used during training so the checkpoint loads exactly.
                 hybrid_mode = config.get('architecture') == 'hybrid_qkn_ab_qstgnn'
                 model = QuantumSpatiotemporalGNN(
                     in_channels=model_in_channels, seq_len=4, conv_out=config['c_conv'],
