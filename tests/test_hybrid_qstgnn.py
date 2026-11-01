@@ -13,7 +13,7 @@ class DummyQKN:
     def __init__(self, n_qubits):
         self.n_qubits = n_qubits
 
-    def extract_temporal_quantum_features(self, X):
+    def extract_temporal_quantum_features(self, X, progress_callback=None):
         X = np.asarray(X)
         # Deterministic stand-in for A branch, preserving expected tensor shape.
         base = X[..., :self.n_qubits]
