@@ -344,9 +344,9 @@ with tab1:
             "**Geospatial & Temporal Setup**\n\nThe 33-bus system is mapped to Chiayi. The extraction pipeline now builds full **Grid Snapshots** required for Graph Neural Network message passing.")
         ids = int(st.slider("How Many Typhoons to Process:", 4, 100, 80, help="Process more distinct storm events to support independent train, validation, calibration, and test partitions. The source dataset may contain fewer eligible events."))
         forecast_horizon = st.slider("Forecast Horizon (Lead-Time Steps):", 1, 6, 2)
-        target_snapshots = st.slider("QPU Snapshot Budget:", 10, 100, 25,
+        target_snapshots = st.slider("QPU Snapshot Budget:", 10, 1000, 700,
                                      help="How many full grid-states to extract. 25 snapshots = 825 individual bus evaluations.")
-
+        threshold_ = st.slider("Risk Trheshold", 0.1, 1.0, 0.38)
         if st.button("Extract Grid Snapshots", type="primary"):
             with st.spinner("Applying Rankine Vortex, Fatigue Models, and Assembling Graph Tensors..."):
                 import pandas as pd
@@ -433,7 +433,7 @@ with tab1:
                                 surge_penalty = coastal_exposure * 0.40
 
                                 total_risk = base_fail_prob + surge_penalty + fatigue_penalty
-                                label = 1 if total_risk >= 0.45 else 0
+                                label = 1 if total_risk >= threshold_ else 0
 
                                 if label == 1: snapshot_has_stress = True
 
